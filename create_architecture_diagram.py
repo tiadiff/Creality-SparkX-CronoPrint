@@ -8,7 +8,7 @@ import os
 import subprocess
 from PIL import Image
 
-DIAGRAM_HTML = """<!DOCTYPE html>
+DIAGRAM_HTML = r"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -197,14 +197,16 @@ DIAGRAM_HTML = """<!DOCTYPE html>
     border-radius: 0 4px 4px 0;
   }
   .math-box {
-    font-family: "Cambria Math", "Times New Roman", serif;
-    font-size: 11.5px;
+    font-family: "Cambria Math", "Georgia", "Times New Roman", serif;
+    font-size: 13px;
     background: #ffffff;
-    border: 1px solid #e2e8f0;
-    padding: 5px 8px;
-    border-radius: 4px;
+    border: 1px solid #cbd5e1;
+    padding: 7px 10px;
+    border-radius: 5px;
     color: #0f172a;
-    margin-top: 4px;
+    margin-top: 5px;
+    text-align: center;
+    letter-spacing: 0.3px;
   }
   .packet-table {
     width: 100%;
@@ -315,7 +317,7 @@ DIAGRAM_HTML = """<!DOCTYPE html>
           <div class="node-desc">
             • <b>Overlay:</b> Absolute positioned <code>&lt;canvas id="crealityUpscaleCanvas"&gt;</code>.<br>
             • <b>Fallback:</b> Sets native video <code>opacity: 0</code>; immediately restores <code>opacity: 1</code> if service is offline.<br>
-            • <b>Smoothing:</b> Alpha cross-fade frame interpolation ($dt &lt; 120\text{ms}$) synchronized with display refresh rate via <code>requestAnimationFrame()</code>.
+            • <b>Smoothing:</b> Alpha cross-fade frame interpolation (&Delta;t &lt; 120 ms) synchronized with display refresh rate via <code>requestAnimationFrame()</code>.
           </div>
         </div>
 
@@ -435,7 +437,7 @@ DIAGRAM_HTML = """<!DOCTYPE html>
             Lifts crushed shadow details (essential for black PLA/PETG) while strictly preserving mid-tones and highlights:
           </div>
           <div class="math-box">
-            $$x' = x + (255 - x) \cdot 0.40 \cdot k \cdot \left(1 - \frac{x}{255}\right)^2$$
+            <b><i>x'</i></b> = <i>x</i> + (255 &minus; <i>x</i>) &times; 0.40 &times; <i>k</i> &times; (1 &minus; <sup><i>x</i></sup>&frasl;<sub>255</sub>)<sup>2</sup>
           </div>
           <div class="node-desc" style="margin-top: 4px;">
             Implemented via pre-computed 256-entry Look-Up Table (LUT) cache evaluated in a single <code>cv2.LUT()</code> pass.
@@ -466,8 +468,8 @@ DIAGRAM_HTML = """<!DOCTYPE html>
           </div>
           <div class="node-desc">
             • <b>Resampling:</b> Lanczos-4 upsampling / Area downsampling to target (720p/1080p/1440p).<br>
-            • <b>Dynamic Blend:</b> $I_{\text{out}} = \alpha \cdot I_{\text{AI}} + (1-\alpha) \cdot I_{\text{orig}}$.<br>
-            • <b>Unsharp Spatial Filter:</b> $I_{\text{sharp}} = (1 + 0.9s) I - 0.9s \cdot \text{Blur}(I, \sigma=1.0)$.<br>
+            • <b>Dynamic Blend:</b> <i>I</i><sub>out</sub> = &alpha; &middot; <i>I</i><sub>AI</sub> + (1 &minus; &alpha;) &middot; <i>I</i><sub>orig</sub><br>
+            • <b>Unsharp Spatial Filter:</b> <i>I</i><sub>sharp</sub> = (1 + 0.9<i>s</i>) &middot; <i>I</i> &minus; 0.9<i>s</i> &middot; Blur(<i>I</i>, &sigma; = 1.0)<br>
             • <b>Fast Encoding:</b> OpenCV turbo JPEG encoder (Quality 90).
           </div>
         </div>
