@@ -544,7 +544,7 @@ DIAGRAM_HTML = r"""<!DOCTYPE html>
 def main():
     base_dir = os.path.dirname(os.path.abspath(__file__))
     html_path = os.path.join(base_dir, "architecture.html")
-    png_path = os.path.join(base_dir, "architecture.png")
+    png_path = os.path.join(base_dir, "architecture_pipeline.png")
     edge_path = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
 
     with open(html_path, "w", encoding="utf-8") as f:

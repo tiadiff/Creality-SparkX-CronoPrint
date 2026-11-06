@@ -32,7 +32,7 @@
 
 The architecture operates as an asynchronous, decoupled client-daemon system communicating over low-latency binary WebSockets.
 
-![System Architecture and Data Flow Specification](architecture.png)
+![System Architecture and Data Flow Specification](architecture_pipeline.png)
 
 ---
 
@@ -431,7 +431,7 @@ Open Creality Print, connect to your 3D printer, and open the **Device** interfa
 ├── Avvia_AI_Upscaler.bat        # Production launcher script
 ├── requirements.txt             # Python dependencies (onnxruntime-directml, aiohttp, etc.)
 ├── screen.png                   # High-DPI capture of the injected UI HUD and control panel
-├── architecture.png             # Standardized IEEE/ACM system architecture and network flow diagram
+├── architecture_pipeline.png    # Standardized IEEE/ACM system architecture and network flow diagram
 ├── create_architecture_diagram.py # Vector-quality headless Edge diagram generator
 ├── LICENSE                      # MIT Open Source License
 └── README.md                    # In-depth technical specification and engineering documentation
