@@ -17,6 +17,37 @@ dist/
 build/
 *.zip
 
+# .NET & Visual Studio build outputs
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+*.user
+*.userosscache
+*.suo
+.vs/
+
+# Pen Plotter project files (separate repo)
+pen_plotter.py
+process_image_to_gcode.py
+converti_in_gcode.bat
+manage_printer_config.py
+send_to_printer.py
+
+# Temporary G-code & Plotter test artifacts
+*.gcode
+*.gcode.tmp
+edges_*.png
+marker_*.png
+clahe_edges.png
+airplane_clean.png
+pencil_test.png
+3130.jpg
+3130_*
+sample_calibration_*
+sample_calibration.svg
+test_*.py
+
 # OS artifacts
 .DS_Store
 Thumbs.db

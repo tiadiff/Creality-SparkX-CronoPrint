@@ -377,8 +377,8 @@ Tested on **NVIDIA GeForce RTX 4070 (12GB VRAM)**, host system **Intel Core i7-1
 ### Step 1: Environment Setup
 Clone the repository and prepare an isolated virtual environment:
 ```powershell
-git clone https://github.com/tiadiff/Creality-Vision-AI.git
-cd Creality-Vision-AI
+git clone https://github.com/tiadiff/Creality-SparkX-CronoPrint.git
+cd Creality-SparkX-CronoPrint
 python -m venv .venv
 .\.venv\Scripts\pip install -r requirements.txt
 ```
@@ -421,20 +421,73 @@ Open Creality Print, connect to your 3D printer, and open the **Device** interfa
 
 ---
 
+## SparkX Print Telemetry & History Console (.NET 8 + WebView2)
+
+In addition to neural video super-resolution, version 1.1.0 introduces the **SparkX Print Telemetry & History Console**, a high-performance desktop suite designed to pull, inspect, and visualize the entire print history and real-time state directly from the printer's Moonraker API and chamber WebRTC feed.
+
+```
+                             TELEMETRY & RANGE EXTRACTION ARCHITECTURE
+ ┌──────────────────────┐         HTTP GET (List)          ┌───────────────────────────┐
+ │ Moonraker History DB │ ───────────────────────────────> │ C# .NET 8 Telemetry Core  │
+ └──────────────────────┘                                  │ (Parallel HTTP Range Sem) │
+ ┌──────────────────────┐    HTTP Range [0..45KB] Thumb    │                           │
+ │ G-Code Storage       │ ───────────────────────────────> │  - Base64 PNG Extraction  │
+ │ (Remote Filesystem)  │ ──> HTTP Range [EOF-76KB..EOF] ─>│  - Slicer Config Parsing  │
+ └──────────────────────┘                                  └─────────────┬─────────────┘
+ ┌──────────────────────┐         WebRTC Stream                  Bidirectional Bridge
+ │ Chamber Live Camera  │ ───────────────────────────────>         (PostMessage)
+ └──────────────────────┘                                                │
+                                                           ┌─────────────▼─────────────┐
+                                                           │ Chromium WebView2 UI View │
+                                                           │ (Dark High-Contrast Theme)│
+                                                           └───────────────────────────┘
+```
+
+### Key Capabilities
+* **Ultra-Fast Range-Based G-Code Metadata Extraction:** Instead of transferring multi-megabyte G-code files, the engine fetches byte ranges (first 45 KB for 260x260 embedded thumbnails and last 76 KB for slicer profile configurations). It extracts nozzle diameters, layer heights, infill densities/patterns, perimeter counts, ironing toggles, and temperature settings in parallel using semaphore-throttled HTTP requests.
+* **Integrated Chamber Live Cam with Fullscreen Modal:** Live WebRTC stream embedded directly alongside real-time thermal and motion metrics with single-click modal expansion.
+* **Triple Telemetry Viewports:** Switch instantly between an engineering horizontal Feed list, a 3D visual Plate Gallery, a dense Data Table, and a slide-over deep inspection drawer.
+* **Cost & Consumables Accounting:** Dynamically recalculates material expenditures based on precise filament extrusion length, diameter, and custom material pricing per kilogram.
+* **Reprint & G-Code Retrieval:** One-click reprinting triggering remote Moonraker job dispatch, plus local G-code backup downloads.
+
+### Quick Start (Desktop Console)
+Launch the compiled .NET 8 application:
+```powershell
+.\Avvia_SparkX_Console.bat
+```
+Alternatively, compile the project in Release mode:
+```powershell
+dotnet build SparkXPrintConsole -c Release
+.\SparkXPrintConsole\bin\Release\net8.0-windows\SparkXPrintConsole.exe
+```
+
+---
+
 ## File System Manifest
 
 ```
-├── ai_upscaler_service.py       # Asynchronous WebSocket/REST server & DirectML inference engine
-├── upscale.js                   # Injected CEF script (DOM observer, canvas overlay, HUD, speed hook)
-├── build_fused_model.py         # Topological ONNX graph surgery & operator fusion tool
-├── install_upscaler.ps1         # Automated PowerShell CEF injector & NTFS DACL manager
-├── Avvia_AI_Upscaler.bat        # Production launcher script
-├── requirements.txt             # Python dependencies (onnxruntime-directml, aiohttp, etc.)
-├── screen.png                   # High-DPI capture of the injected UI HUD and control panel
-├── architecture_pipeline.png    # Standardized IEEE/ACM system architecture and network flow diagram
-├── create_architecture_diagram.py # Vector-quality headless Edge diagram generator
-├── LICENSE                      # MIT Open Source License
-└── README.md                    # In-depth technical specification and engineering documentation
+├── ai_upscaler_service.py          # Asynchronous WebSocket/REST server & DirectML inference engine
+├── upscale.js                      # Injected CEF script (DOM observer, canvas overlay, HUD, speed hook)
+├── build_fused_model.py            # Topological ONNX graph surgery & operator fusion tool
+├── install_upscaler.ps1            # Automated PowerShell CEF injector & NTFS DACL manager
+├── Avvia_AI_Upscaler.bat           # Production launcher script for AI Upscaler
+├── SparkXPrintConsole/             # C# .NET 8 WinForms + WebView2 Telemetry Console application
+│   ├── Program.cs                  # High-DPI application bootstrapper
+│   ├── MainForm.cs                 # WinForms host window with DWM dark mode titlebar & WebView2 bridge
+│   ├── PrinterService.cs           # Concurrent Moonraker HTTP range parser & live telemetry engine
+│   ├── Models.cs                   # Strongly-typed print job & telemetry telemetry entities
+│   ├── AppSettings.cs              # Local JSON configuration persistence
+│   └── wwwroot/index.html          # Professional dark-mode UI dashboard (emerald styling)
+├── Avvia_SparkX_Console.bat        # Launcher script for SparkX Print Console
+├── generate_printer_report.py      # Standalone Python Moonraker history & range extractor
+├── Genera_Report_Stampe.bat        # Batch script to generate standalone printer_history.html
+├── printer_history.html            # Standalone telemetry report snapshot
+├── requirements.txt                # Python dependencies (onnxruntime-directml, aiohttp, etc.)
+├── screen.png                      # High-DPI capture of the injected UI HUD and control panel
+├── architecture_pipeline.png       # Standardized IEEE/ACM system architecture and network flow diagram
+├── create_architecture_diagram.py  # Vector-quality headless Edge diagram generator
+├── LICENSE                         # MIT Open Source License
+└── README.md                       # In-depth technical specification and engineering documentation
 ```
 
 ---
