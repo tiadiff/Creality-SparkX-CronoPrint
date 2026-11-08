@@ -173,6 +173,9 @@ namespace SparkXPrintConsole
         [JsonPropertyName("state")]
         public string State { get; set; } = "offline";
 
+        [JsonPropertyName("state_label")]
+        public string StateLabel { get; set; } = "Pronta";
+
         [JsonPropertyName("filename")]
         public string Filename { get; set; } = "";
 
@@ -190,6 +193,12 @@ namespace SparkXPrintConsole
 
         [JsonPropertyName("progress_pct")]
         public double ProgressPct { get; set; }
+
+        [JsonPropertyName("current_layer")]
+        public int CurrentLayer { get; set; }
+
+        [JsonPropertyName("total_layers")]
+        public int TotalLayers { get; set; }
 
         [JsonPropertyName("filament_used_m")]
         public double FilamentUsedM { get; set; }

@@ -22,6 +22,8 @@ namespace SparkXPrintConsole
         private List<PrintJob> _currentJobs = new();
         private readonly System.Windows.Forms.Timer _pollTimer = new();
         private bool _isSyncing = false;
+        private int _consecutivePollFailures = 0;
+        private LivePrinterStatus? _lastGoodStatus = null;
 
         public MainForm()
         {
@@ -128,11 +130,29 @@ namespace SparkXPrintConsole
                 }
 
                 var status = await PrinterService.GetLiveStatusAsync(_settings.PrinterIp, _settings.PrinterPort, thumbMap);
-                PostJsonToWeb(new
+                if (status.IsConnected)
                 {
-                    type = "live_status",
-                    status
-                });
+                    _consecutivePollFailures = 0;
+                    _lastGoodStatus = status;
+                    PostJsonToWeb(new
+                    {
+                        type = "live_status",
+                        status
+                    });
+                }
+                else
+                {
+                    _consecutivePollFailures++;
+                    // Only dispatch offline state after 3 consecutive failed polls to prevent transient banner flickering
+                    if (_consecutivePollFailures >= 3 || _lastGoodStatus == null)
+                    {
+                        PostJsonToWeb(new
+                        {
+                            type = "live_status",
+                            status
+                        });
+                    }
+                }
             }
             catch { }
         }

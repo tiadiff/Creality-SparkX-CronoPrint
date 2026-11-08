@@ -15,13 +15,14 @@ namespace SparkXPrintConsole
     {
         private static readonly HttpClient Http = new HttpClient { Timeout = TimeSpan.FromSeconds(6) };
         private static readonly string CacheFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "history_cache.json");
+        private static readonly ConcurrentDictionary<string, FileMetadata> ActiveFileMetaCache = new();
 
         public static async Task<LivePrinterStatus> GetLiveStatusAsync(string ip, int port, Dictionary<string, string>? thumbCache = null)
         {
-            var status = new LivePrinterStatus { IsConnected = false, State = "offline" };
+            var status = new LivePrinterStatus { IsConnected = false, State = "offline", StateLabel = "Disconnessa" };
             try
             {
-                var url = $"http://{ip}:{port}/printer/objects/query?print_stats&extruder&heater_bed";
+                var url = $"http://{ip}:{port}/printer/objects/query?print_stats&extruder&heater_bed&virtual_sdcard&idle_timeout&display_status";
                 var res = await Http.GetStringAsync(url);
                 using var doc = JsonDocument.Parse(res);
                 if (doc.RootElement.TryGetProperty("result", out var result) &&
@@ -29,12 +30,11 @@ namespace SparkXPrintConsole
                 {
                     status.IsConnected = true;
 
+                    string rawState = "ready";
                     if (st.TryGetProperty("print_stats", out var ps))
                     {
-                        status.State = ps.TryGetProperty("state", out var stateEl) ? stateEl.GetString() ?? "ready" : "ready";
-                        status.IsPrinting = status.State == "printing" || status.State == "paused";
+                        rawState = ps.TryGetProperty("state", out var stateEl) ? stateEl.GetString() ?? "ready" : "ready";
                         status.Filename = ps.TryGetProperty("filename", out var fEl) ? fEl.GetString() ?? "" : "";
-                        status.ProjectName = CleanProjectName(status.Filename);
 
                         if (ps.TryGetProperty("print_duration", out var durEl))
                         {
@@ -53,7 +53,53 @@ namespace SparkXPrintConsole
                         {
                             status.CurrentZ = Math.Round(zEl.GetDouble(), 2);
                         }
+
+                        if (ps.TryGetProperty("info", out var infoEl))
+                        {
+                            if (infoEl.TryGetProperty("current_layer", out var clEl) && clEl.ValueKind == JsonValueKind.Number)
+                                status.CurrentLayer = clEl.GetInt32();
+                            if (infoEl.TryGetProperty("total_layer", out var tlEl) && tlEl.ValueKind == JsonValueKind.Number)
+                                status.TotalLayers = tlEl.GetInt32();
+                        }
                     }
+
+                    string idleState = "";
+                    double idleTime = 0.0;
+                    if (st.TryGetProperty("idle_timeout", out var it))
+                    {
+                        if (it.TryGetProperty("state", out var itStateEl)) idleState = itStateEl.GetString() ?? "";
+                        if (it.TryGetProperty("printing_time", out var itTimeEl)) idleTime = itTimeEl.GetDouble();
+                    }
+
+                    bool vsdActive = false;
+                    double vsdProgress = 0.0;
+                    string vsdPath = "";
+                    if (st.TryGetProperty("virtual_sdcard", out var vsd))
+                    {
+                        if (vsd.TryGetProperty("is_active", out var vsdActEl)) vsdActive = vsdActEl.GetBoolean();
+                        if (vsd.TryGetProperty("progress", out var vsdProgEl)) vsdProgress = vsdProgEl.GetDouble();
+                        if (vsd.TryGetProperty("file_path", out var vsdPathEl)) vsdPath = vsdPathEl.GetString() ?? "";
+
+                        if (status.CurrentLayer == 0 && vsd.TryGetProperty("layer", out var layerEl) && layerEl.ValueKind == JsonValueKind.Number)
+                            status.CurrentLayer = layerEl.GetInt32();
+                        if (status.TotalLayers == 0 && vsd.TryGetProperty("layer_count", out var lCntEl) && lCntEl.ValueKind == JsonValueKind.Number)
+                            status.TotalLayers = lCntEl.GetInt32();
+                    }
+
+                    double dispProgress = 0.0;
+                    if (st.TryGetProperty("display_status", out var ds))
+                    {
+                        if (ds.TryGetProperty("progress", out var dsProgEl)) dispProgress = dsProgEl.GetDouble();
+                    }
+
+                    double progress = Math.Max(vsdProgress, dispProgress);
+                    status.ProgressPct = Math.Round(progress * 100.0, 1);
+
+                    if (string.IsNullOrEmpty(status.Filename) && !string.IsNullOrEmpty(vsdPath))
+                    {
+                        status.Filename = Path.GetFileName(vsdPath);
+                    }
+                    status.ProjectName = CleanProjectName(status.Filename);
 
                     if (st.TryGetProperty("extruder", out var ext))
                     {
@@ -67,9 +113,67 @@ namespace SparkXPrintConsole
                         if (bed.TryGetProperty("target", out var tgtEl)) status.BedTarget = Math.Round(tgtEl.GetDouble(), 1);
                     }
 
-                    if (!string.IsNullOrEmpty(status.Filename) && thumbCache != null && thumbCache.TryGetValue(status.Filename, out var t))
+                    // Determine print state
+                    rawState = rawState.ToLowerInvariant();
+                    bool isIdlePrinting = idleState.Equals("Printing", StringComparison.OrdinalIgnoreCase);
+                    bool isHeating = status.NozzleTarget > 0 || status.BedTarget > 0;
+
+                    if (rawState == "printing")
                     {
-                        status.Thumbnail = t;
+                        status.IsPrinting = true;
+                        status.State = "printing";
+                        status.StateLabel = "In Stampa";
+                    }
+                    else if (rawState == "paused")
+                    {
+                        status.IsPrinting = true;
+                        status.State = "paused";
+                        status.StateLabel = "In Pausa";
+                    }
+                    else if (rawState == "standby" && (isIdlePrinting || vsdActive || (isHeating && !string.IsNullOrEmpty(status.Filename))))
+                    {
+                        status.IsPrinting = true;
+                        status.State = "preparing";
+                        status.StateLabel = "In Preparazione / Riscaldamento";
+                        if (status.PrintDurationSec <= 0 && idleTime > 0)
+                        {
+                            status.PrintDurationSec = idleTime;
+                            status.PrintDurationStr = FormatDuration(idleTime);
+                        }
+                    }
+                    else
+                    {
+                        status.IsPrinting = false;
+                        status.State = rawState == "complete" ? "completed" : (rawState == "cancelled" ? "cancelled" : (rawState == "error" ? "error" : "ready"));
+                        status.StateLabel = status.State == "ready" ? "Pronta" : (status.State == "completed" ? "Completata" : (status.State == "cancelled" ? "Interrotta" : status.State));
+                    }
+
+                    // Fetch / apply thumbnail and estimated duration for active print
+                    if (!string.IsNullOrEmpty(status.Filename))
+                    {
+                        if (thumbCache != null && thumbCache.TryGetValue(status.Filename, out var t))
+                        {
+                            status.Thumbnail = t;
+                        }
+                        else if (ActiveFileMetaCache.TryGetValue(status.Filename, out var m))
+                        {
+                            status.Thumbnail = m.Thumbnail;
+                            status.TimeEstStr = m.TimeEst ?? "N/D";
+                            if (status.TotalLayers == 0 && m.TotalLayers.HasValue) status.TotalLayers = m.TotalLayers.Value;
+                        }
+                        else if (status.IsPrinting)
+                        {
+                            // Asynchronously extract metadata once for active file
+                            _ = Task.Run(async () =>
+                            {
+                                try
+                                {
+                                    var meta = await ExtractFileMetadataAsync(ip, port, status.Filename, 0);
+                                    ActiveFileMetaCache[status.Filename] = meta;
+                                }
+                                catch { }
+                            });
+                        }
                     }
                 }
             }
@@ -77,6 +181,7 @@ namespace SparkXPrintConsole
             {
                 status.IsConnected = false;
                 status.State = "offline";
+                status.StateLabel = "Disconnessa";
             }
             return status;
         }

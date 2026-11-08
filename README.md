@@ -71,10 +71,11 @@ Instead of saturating Wi-Fi networks by transferring full G-code files, CronoPri
 * [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) (pre-installed on Windows 11 and modern Windows 10)
 
 ### Quick Start (Desktop Console)
-Launch the pre-compiled executable via the included batch script:
+Launch the desktop console via the included batch script:
 ```powershell
 .\Avvia_SparkX_Console.bat
 ```
+*(This opens the command prompt and launches `SparkXPrintConsole.exe` directly, providing embedded real-time live telemetry, webcam streaming, and job history inside the desktop application window without launching any external browser).*
 
 Alternatively, build and run from source in Release configuration:
 ```powershell
@@ -82,12 +83,16 @@ dotnet build SparkXPrintConsole -c Release
 .\SparkXPrintConsole\bin\Release\net8.0-windows\SparkXPrintConsole.exe
 ```
 
-### Standalone Python Report Generator
-If you prefer generating a static HTML snapshot without the desktop application:
+### Standalone HTML Report
+If you want to generate a static HTML report snapshot and view it in your default web browser:
 ```powershell
-python generate_printer_report.py
+.\Genera_Report_Stampe.bat
 ```
-This queries Moonraker, extracts G-code metadata, and produces `printer_history.html`.
+or via Python CLI:
+```powershell
+python generate_printer_report.py --open
+```
+This queries Moonraker, extracts G-code metadata, produces `printer_history.html`, and opens it in your default web browser.
 
 ---
 
@@ -101,9 +106,9 @@ This queries Moonraker, extracts G-code metadata, and produces `printer_history.
 │   ├── Models.cs                   # Strongly-typed print job & telemetry entities
 │   ├── AppSettings.cs              # JSON configuration persistence
 │   └── wwwroot/index.html          # High-contrast dark-mode dashboard UI (emerald accents)
-├── Avvia_SparkX_Console.bat        # Launcher script for SparkX Print Console
+├── Avvia_SparkX_Console.bat        # Launcher script: opens CMD prompt and starts SparkXPrintConsole.exe
+├── Genera_Report_Stampe.bat        # Batch script: generates standalone printer_history.html & opens browser
 ├── generate_printer_report.py      # Standalone Python Moonraker history & range extractor
-├── Genera_Report_Stampe.bat        # Batch script to generate standalone printer_history.html
 ├── printer_history.html            # Standalone telemetry report snapshot
 ├── .gitignore                      # Git exclusion rules for .NET and temp files
 ├── LICENSE                         # MIT Open Source License

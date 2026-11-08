@@ -686,8 +686,75 @@
         }
 
         .status-badge.in_progress {
-            color: var(--green);
+            color: var(--green-bright);
+            background: rgba(16, 185, 129, 0.15);
             border: 1px solid var(--green);
+        }
+
+        .status-badge.preparing {
+            color: #fbbf24;
+            background: rgba(245, 158, 11, 0.15);
+            border: 1px solid #f59e0b;
+        }
+
+        .status-badge.paused {
+            color: #38bdf8;
+            background: rgba(56, 189, 248, 0.15);
+            border: 1px solid #38bdf8;
+        }
+
+        .live-badge.preparing {
+            background: rgba(245, 158, 11, 0.15);
+            color: #fbbf24;
+            border-color: #f59e0b;
+        }
+
+        .live-pulse.preparing {
+            background-color: #f59e0b;
+            box-shadow: 0 0 10px #f59e0b;
+        }
+
+        .live-badge.paused {
+            background: rgba(56, 189, 248, 0.15);
+            color: #38bdf8;
+            border-color: #38bdf8;
+        }
+
+        .live-pulse.paused {
+            background-color: #38bdf8;
+            box-shadow: 0 0 10px #38bdf8;
+        }
+
+        .feed-history-divider {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin: 1.25rem 0 1rem 0;
+            color: var(--fg-faint);
+            font-family: var(--font-mono);
+            font-size: 11px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+
+        .feed-history-divider::before,
+        .feed-history-divider::after {
+            content: '';
+            flex: 1;
+            height: 1px;
+            background: var(--border);
+        }
+
+        .feed-row.active-print-row {
+            border: 1px solid var(--green);
+            background: linear-gradient(90deg, rgba(16,185,129,0.08) 0%, rgba(13,19,24,0.95) 100%);
+            box-shadow: 0 0 15px rgba(16, 185, 129, 0.12);
+        }
+
+        .feed-row.active-print-row.preparing {
+            border: 1px solid #f59e0b;
+            background: linear-gradient(90deg, rgba(245,158,11,0.08) 0%, rgba(13,19,24,0.95) 100%);
+            box-shadow: 0 0 15px rgba(245, 158, 11, 0.12);
         }
 
         /* EXTENDED ITALIAN DATE STYLE - LARGER AND HIGH-CONTRAST */
@@ -1131,13 +1198,26 @@
             <div class="live-layout">
                 <div>
                     <div>
-                        <span class="live-badge"><span class="live-pulse"></span>LIVE STAMPA IN CORSO</span>
+                        <span class="live-badge" id="liveBadge"><span class="live-pulse" id="livePulse"></span><span id="liveBadgeText">LIVE • STAMPA IN CORSO</span></span>
                     </div>
                     <div class="live-info-title" id="liveProjectName">Stampa attiva...</div>
                     <div class="live-info-sub">
                         <span>Tempo: <strong style="color:var(--fg-white);" id="liveDuration">0s</strong></span>
+                        <span id="liveTimeEstBox" style="display:none;">Stima: <strong style="color:var(--fg-white);" id="liveTimeEst">N/D</strong></span>
                         <span>Quota Z: <strong style="color:var(--fg-white);" id="liveZ">0.0 mm</strong></span>
                         <span>Estruso: <strong style="color:var(--fg-white);" id="liveFilament">0.0 m (0g)</strong></span>
+                        <span id="liveLayerBox" style="display:none;">Layer: <strong style="color:var(--fg-white);" id="liveLayer">1/1</strong></span>
+                    </div>
+
+                    <!-- Live Progress Bar -->
+                    <div id="liveProgressContainer" style="margin-top: 0.65rem; max-width: 480px; display: none;">
+                        <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px; font-family:var(--font-mono);">
+                            <span style="color:var(--fg-muted);">Avanzamento Stampa</span>
+                            <span style="color:var(--green-bright); font-weight:700;" id="liveProgressPct">0.0%</span>
+                        </div>
+                        <div style="background:var(--border); height:6px; border-radius:3px; overflow:hidden;">
+                            <div id="liveProgressBar" style="background:var(--green); height:100%; width:0%; transition: width 0.3s ease;"></div>
+                        </div>
                     </div>
                 </div>
 
@@ -1453,12 +1533,25 @@
             modal.style.display = 'none';
         }
 
+        let activeLiveStatus = null;
+        let lastIsPrinting = false;
+        let lastState = '';
+
         function updateLiveStatus(st) {
+            const prevPrinting = lastIsPrinting;
+            const prevState = lastState;
+            activeLiveStatus = st;
+            lastIsPrinting = st?.is_printing || false;
+            lastState = st?.state || '';
+
             const banner = document.getElementById('liveBanner');
             const connPill = document.getElementById('connPill');
             const connDot = document.getElementById('connDot');
             const connText = document.getElementById('connText');
             const camFrame = document.getElementById('liveCameraFrame');
+            const liveBadge = document.getElementById('liveBadge');
+            const livePulse = document.getElementById('livePulse');
+            const liveBadgeText = document.getElementById('liveBadgeText');
 
             if (!st || !st.is_connected) {
                 connPill.classList.add('offline');
@@ -1466,15 +1559,36 @@
                 connText.textContent = 'OFFLINE';
                 banner.style.display = 'none';
                 if (camFrame.src !== 'about:blank') camFrame.src = 'about:blank';
+                if (prevPrinting !== lastIsPrinting) filterJobs();
                 return;
             }
 
             connPill.classList.remove('offline');
             connDot.classList.remove('offline');
-            connText.textContent = st.is_printing ? 'STAMPA ATTIVA' : 'PRONTA';
 
             if (st.is_printing) {
                 banner.style.display = 'block';
+
+                const isPrep = st.state === 'preparing';
+                const isPaused = st.state === 'paused';
+
+                if (isPrep) {
+                    connText.textContent = 'IN PREPARAZIONE';
+                    if (liveBadge) liveBadge.className = 'live-badge preparing';
+                    if (livePulse) livePulse.className = 'live-pulse preparing';
+                    if (liveBadgeText) liveBadgeText.textContent = 'LIVE • IN PREPARAZIONE / RISCALDAMENTO';
+                } else if (isPaused) {
+                    connText.textContent = 'IN PAUSA';
+                    if (liveBadge) liveBadge.className = 'live-badge paused';
+                    if (livePulse) livePulse.className = 'live-pulse paused';
+                    if (liveBadgeText) liveBadgeText.textContent = 'LIVE • STAMPA IN PAUSA';
+                } else {
+                    connText.textContent = 'STAMPA ATTIVA';
+                    if (liveBadge) liveBadge.className = 'live-badge';
+                    if (livePulse) livePulse.className = 'live-pulse';
+                    if (liveBadgeText) liveBadgeText.textContent = 'LIVE • STAMPA IN CORSO';
+                }
+
                 document.getElementById('liveProjectName').textContent = st.project_name || st.filename;
                 document.getElementById('liveDuration').textContent = st.print_duration_str;
                 document.getElementById('liveZ').textContent = `${st.current_z.toFixed(2)} mm`;
@@ -1482,14 +1596,65 @@
                 document.getElementById('liveNozzleTemp').textContent = `${st.nozzle_temp.toFixed(1)}° / ${st.nozzle_target.toFixed(0)}°`;
                 document.getElementById('liveBedTemp').textContent = `${st.bed_temp.toFixed(1)}° / ${st.bed_target.toFixed(0)}°`;
 
-                // Set camera iframe source if not loaded
+                // Estimated time
+                const estBox = document.getElementById('liveTimeEstBox');
+                if (st.time_est_str && st.time_est_str !== 'N/D') {
+                    document.getElementById('liveTimeEst').textContent = st.time_est_str;
+                    estBox.style.display = 'inline';
+                } else {
+                    estBox.style.display = 'none';
+                }
+
+                // Layer info
+                const layerBox = document.getElementById('liveLayerBox');
+                if (st.total_layers > 0) {
+                    document.getElementById('liveLayer').textContent = `${st.current_layer} / ${st.total_layers}`;
+                    layerBox.style.display = 'inline';
+                } else {
+                    layerBox.style.display = 'none';
+                }
+
+                // Progress bar
+                const progBox = document.getElementById('liveProgressContainer');
+                if (st.progress_pct > 0 || st.total_layers > 0) {
+                    progBox.style.display = 'block';
+                    const pctVal = Math.min(100, Math.max(0, st.progress_pct));
+                    document.getElementById('liveProgressPct').textContent = `${pctVal.toFixed(1)}%`;
+                    document.getElementById('liveProgressBar').style.width = `${pctVal}%`;
+                } else {
+                    progBox.style.display = 'none';
+                }
+
+                // Camera iframe source
                 const camUrl = `http://${printerIp}:8000/`;
                 if (!camFrame.src.includes(':8000')) {
                     camFrame.src = camUrl;
                 }
             } else {
+                connText.textContent = 'PRONTA';
                 banner.style.display = 'none';
             }
+
+            if (prevPrinting !== lastIsPrinting || prevState !== lastState) {
+                filterJobs();
+            } else if (lastIsPrinting) {
+                updateLivePinnedCardFields(st);
+            }
+        }
+
+        function updateLivePinnedCardFields(st) {
+            const cardDur = document.getElementById('livePinnedDuration');
+            if (cardDur) cardDur.textContent = st.print_duration_str;
+            const cardZ = document.getElementById('livePinnedZ');
+            if (cardZ) cardZ.textContent = `${st.current_z.toFixed(2)}mm`;
+            const cardProg = document.getElementById('livePinnedProg');
+            if (cardProg) cardProg.textContent = `${st.progress_pct.toFixed(1)}%`;
+            const cardFil = document.getElementById('livePinnedFil');
+            if (cardFil) cardFil.textContent = `${st.filament_used_g.toFixed(1)}g consumati`;
+            const cardNozzle = document.getElementById('livePinnedNozzle');
+            if (cardNozzle) cardNozzle.textContent = `${st.nozzle_temp.toFixed(1)}° / ${st.nozzle_target.toFixed(0)}°`;
+            const cardBed = document.getElementById('livePinnedBed');
+            if (cardBed) cardBed.textContent = `${st.bed_temp.toFixed(1)}° / ${st.bed_target.toFixed(0)}°`;
         }
 
         function updateSummaryKpis() {
@@ -1519,12 +1684,67 @@
 
         function renderFeed(jobs) {
             const c = document.getElementById('feedContainer');
-            if (jobs.length === 0) {
+            if (jobs.length === 0 && (!activeLiveStatus || !activeLiveStatus.is_printing)) {
                 c.innerHTML = '<div style="text-align: center; padding: 3rem; color: var(--fg-faint); font-family: var(--font-mono);">NESSUN RECORD CORRISPONDENTE</div>';
                 return;
             }
 
-            c.innerHTML = jobs.map(j => {
+            let livePinnedHtml = '';
+            if (activeLiveStatus && activeLiveStatus.is_printing && (currentStatusFilter === 'all' || currentStatusFilter === 'in_progress')) {
+                const isPrep = activeLiveStatus.state === 'preparing';
+                const isPaused = activeLiveStatus.state === 'paused';
+                const statusLabel = isPrep ? 'In Preparazione' : (isPaused ? 'In Pausa' : 'In Stampa');
+                const badgeClass = isPrep ? 'preparing' : (isPaused ? 'paused' : 'in_progress');
+                const rowClass = isPrep ? 'active-print-row preparing' : 'active-print-row';
+                const thumbHtml = activeLiveStatus.thumbnail 
+                    ? `<img class="feed-thumb-img" src="${activeLiveStatus.thumbnail}" alt="${activeLiveStatus.project_name}" loading="lazy">`
+                    : svgPlaceholder;
+
+                const layerText = activeLiveStatus.total_layers > 0 ? `${activeLiveStatus.current_layer}/${activeLiveStatus.total_layers}` : 'Avvio';
+                const progPct = activeLiveStatus.progress_pct > 0 ? `${activeLiveStatus.progress_pct.toFixed(1)}%` : '0.0%';
+
+                livePinnedHtml = `
+                <div class="feed-row ${rowClass}">
+                    <div class="feed-thumb-box">${thumbHtml}</div>
+
+                    <div class="feed-col-primary">
+                        <div class="feed-title" style="color:var(--green-bright); display:flex; align-items:center; gap:8px;">
+                            <span class="live-pulse ${isPrep ? 'preparing' : ''}" style="display:inline-block;"></span>
+                            ${activeLiveStatus.project_name}
+                        </div>
+                        <div class="feed-file" title="${activeLiveStatus.filename}">${activeLiveStatus.filename}</div>
+                        
+                        <div class="feed-tags">
+                            <span class="tag-pill green">Stampa Attiva</span>
+                            <span class="tag-pill highlight"><strong>Quota Z:</strong> <span id="livePinnedZ">${activeLiveStatus.current_z.toFixed(2)}mm</span></span>
+                            <span class="tag-pill highlight"><strong>Layer:</strong> ${layerText}</span>
+                            <span class="tag-pill"><strong>Avanzamento:</strong> <span id="livePinnedProg">${progPct}</span></span>
+                            ${activeLiveStatus.time_est_str && activeLiveStatus.time_est_str !== 'N/D' ? `<span class="tag-pill"><strong>Stima Slicer:</strong> ${activeLiveStatus.time_est_str}</span>` : ''}
+                        </div>
+                    </div>
+
+                    <div class="feed-col-specs">
+                        <div class="spec-line"><span class="spec-label">Nozzle</span><span class="spec-val" style="color:var(--green-bright); font-weight:700;" id="livePinnedNozzle">${activeLiveStatus.nozzle_temp.toFixed(1)}° / ${activeLiveStatus.nozzle_target.toFixed(0)}°</span></div>
+                        <div class="spec-line"><span class="spec-label">Piatto</span><span class="spec-val" style="color:var(--green-bright); font-weight:700;" id="livePinnedBed">${activeLiveStatus.bed_temp.toFixed(1)}° / ${activeLiveStatus.bed_target.toFixed(0)}°</span></div>
+                        <div class="spec-line"><span class="spec-label">Estruso</span><span class="spec-val">${activeLiveStatus.filament_used_m.toFixed(2)}m (${activeLiveStatus.filament_used_g.toFixed(1)}g)</span></div>
+                    </div>
+
+                    <div class="feed-col-metrics">
+                        <div class="metric-duration" style="color:var(--green-bright);" id="livePinnedDuration">${activeLiveStatus.print_duration_str}</div>
+                        <div class="metric-grams" id="livePinnedFil">${activeLiveStatus.filament_used_g.toFixed(1)}g consumati</div>
+                    </div>
+
+                    <div class="feed-col-status">
+                        <span class="status-badge ${badgeClass}">${statusLabel}</span>
+                        <div class="feed-date" style="color:var(--green-bright);">ADESSO IN MACCHINA</div>
+                        <span class="feed-job-id">LIVE ACTIVE</span>
+                    </div>
+                </div>
+                ${jobs.length > 0 ? '<div class="feed-history-divider"><span>Storico Lavori Precedenti</span></div>' : ''}
+                `;
+            }
+
+            const jobsHtml = jobs.map(j => {
                 const thumbHtml = j.thumbnail 
                     ? `<img class="feed-thumb-img" src="${j.thumbnail}" alt="${j.project_name}" loading="lazy">`
                     : svgPlaceholder;
@@ -1580,6 +1800,8 @@
                 </div>
                 `;
             }).join('');
+
+            c.innerHTML = livePinnedHtml + jobsHtml;
         }
 
         function renderGallery(jobs) {
@@ -1626,12 +1848,42 @@
 
         function renderTable(jobs) {
             const tbody = document.getElementById('tableBody');
-            if (jobs.length === 0) {
+            if (jobs.length === 0 && (!activeLiveStatus || !activeLiveStatus.is_printing)) {
                 tbody.innerHTML = '<tr><td colspan="14" style="text-align: center; padding: 2rem; color: var(--fg-faint);">NESSUN RECORD</td></tr>';
                 return;
             }
 
-            tbody.innerHTML = jobs.map(j => {
+            let liveTableHtml = '';
+            if (activeLiveStatus && activeLiveStatus.is_printing && (currentStatusFilter === 'all' || currentStatusFilter === 'in_progress')) {
+                const isPrep = activeLiveStatus.state === 'preparing';
+                const isPaused = activeLiveStatus.state === 'paused';
+                const statusLabel = isPrep ? 'In Preparazione' : (isPaused ? 'In Pausa' : 'In Stampa');
+                const badgeClass = isPrep ? 'preparing' : (isPaused ? 'paused' : 'in_progress');
+                const thumbHtml = activeLiveStatus.thumbnail 
+                    ? `<img class="table-thumb" src="${activeLiveStatus.thumbnail}" alt="${activeLiveStatus.project_name}">`
+                    : `<div class="table-thumb" style="display:flex;align-items:center;justify-content:center;">${svgPlaceholder}</div>`;
+
+                liveTableHtml = `
+                <tr style="background: rgba(16, 185, 129, 0.08); border-left: 3px solid var(--green);">
+                    <td>${thumbHtml}</td>
+                    <td><strong style="color:var(--green-bright); font-size:14px;">● ${activeLiveStatus.project_name}</strong></td>
+                    <td><span class="status-badge ${badgeClass}">${statusLabel}</span></td>
+                    <td style="font-size:13px; font-weight:700; color:var(--green-bright);">ADESSO IN MACCHINA</td>
+                    <td style="font-family:var(--font-mono); font-weight:600;"><span style="color:var(--fg-muted); font-size:11px;">Quota Z:</span> ${activeLiveStatus.current_z.toFixed(2)} mm</td>
+                    <td style="font-family:var(--font-mono); font-weight:600;"><span style="color:var(--fg-muted); font-size:11px;">Layer:</span> ${activeLiveStatus.total_layers > 0 ? activeLiveStatus.current_layer + '/' + activeLiveStatus.total_layers : 'N/D'}</td>
+                    <td style="max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family:var(--font-mono); color:var(--green-bright);" title="${activeLiveStatus.filename}">${activeLiveStatus.filename}</td>
+                    <td style="font-family:var(--font-mono); font-size:13px;">Prog: ${activeLiveStatus.progress_pct.toFixed(1)}%</td>
+                    <td style="font-size:13px;">Auto</td>
+                    <td style="font-family:var(--font-mono); font-weight:700; color:var(--green-bright); font-size:14px;">${activeLiveStatus.print_duration_str}</td>
+                    <td style="font-family:var(--font-mono); color:var(--fg-faint); font-size:13px;">${activeLiveStatus.time_est_str || 'N/D'}</td>
+                    <td style="font-family:var(--font-mono); font-size:13px;">${activeLiveStatus.filament_used_g.toFixed(1)}g</td>
+                    <td style="font-family:var(--font-mono); font-weight:700; color:var(--green-bright); font-size:14px;">--</td>
+                    <td><span class="tag-pill green">LIVE</span></td>
+                </tr>
+                `;
+            }
+
+            const jobsHtml = jobs.map(j => {
                 const thumbHtml = j.thumbnail 
                     ? `<img class="table-thumb" src="${j.thumbnail}" alt="${j.project_name}">`
                     : `<div class="table-thumb" style="display:flex;align-items:center;justify-content:center;">${svgPlaceholder}</div>`;
@@ -1658,6 +1910,8 @@
                 </tr>
                 `;
             }).join('');
+
+            tbody.innerHTML = liveTableHtml + jobsHtml;
         }
 
         function filterJobs() {
