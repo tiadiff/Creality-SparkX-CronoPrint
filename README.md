@@ -4,6 +4,8 @@
 
 **Creality SparkX CronoPrint** is a high-performance desktop application (.NET 8 WinForms + embedded Chromium WebView2) and telemetry analytics suite engineered specifically for the **Creality SparkX i7** and **K1 / K1 Max** CoreXY ecosystem running Moonraker and Klipper firmware.
 
+<img width="822" height="629" alt="image" src="https://github.com/user-attachments/assets/72968ff5-c0ec-4edb-a905-e8d247fcce9e" />
+
 The suite provides real-time print telemetry, integrated live chamber video monitoring, cost accounting, and ultra-fast G-code metadata extraction directly from remote printer storage without downloading multi-megabyte print files.
 
 ---
