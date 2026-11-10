@@ -589,6 +589,117 @@
             color: var(--fg-white);
         }
 
+        /* MULTI-FILAMENT & FEATURE BREAKDOWN ENHANCEMENTS */
+        .color-dots-group {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            vertical-align: middle;
+        }
+
+        .color-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+            border: 1px solid rgba(255, 255, 255, 0.4);
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+            flex-shrink: 0;
+        }
+
+        .color-dot.large {
+            width: 14px;
+            height: 14px;
+        }
+
+        .segment-bar {
+            height: 10px;
+            border-radius: 5px;
+            background: #14171f;
+            overflow: hidden;
+            display: flex;
+            width: 100%;
+            margin: 8px 0;
+            border: 1px solid var(--border);
+        }
+
+        .segment-bar-slice {
+            height: 100%;
+            transition: width 0.3s ease;
+        }
+
+        .filament-card-row {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            border-radius: 5px;
+            padding: 8px 12px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 6px;
+        }
+
+        .breakdown-summary-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin: 10px 0;
+        }
+
+        .breakdown-card {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 10px 14px;
+        }
+
+        .breakdown-card.model {
+            border-color: rgba(16, 185, 129, 0.3);
+            background: rgba(16, 185, 129, 0.05);
+        }
+
+        .breakdown-card.waste {
+            border-color: rgba(245, 158, 11, 0.3);
+            background: rgba(245, 158, 11, 0.05);
+        }
+
+        .breakdown-card-title {
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 4px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .breakdown-card-num {
+            font-family: var(--font-mono);
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--fg-white);
+        }
+
+        .breakdown-card-sub {
+            font-family: var(--font-mono);
+            font-size: 12px;
+            color: var(--fg-muted);
+            margin-top: 2px;
+        }
+
+        .breakdown-item-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 7px 11px;
+            border-radius: 4px;
+            background: var(--bg-viewport);
+            margin-bottom: 5px;
+            border: 1px solid var(--border-faint);
+            font-size: 13px;
+        }
+
         .feed-col-specs {
             border-left: 1px solid var(--border-faint);
             border-right: 1px solid var(--border-faint);
@@ -1209,6 +1320,9 @@
                         <span id="liveLayerBox" style="display:none;">Layer: <strong style="color:var(--fg-white);" id="liveLayer">1/1</strong></span>
                     </div>
 
+                    <!-- Live Multi-Filament & Breakdown Strip -->
+                    <div id="liveFilamentRow" style="margin-top: 0.45rem; display: none; gap: 6px; align-items: center;" class="feed-tags"></div>
+
                     <!-- Live Progress Bar -->
                     <div id="liveProgressContainer" style="margin-top: 0.65rem; max-width: 480px; display: none;">
                         <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px; font-family:var(--font-mono);">
@@ -1454,8 +1568,26 @@
                 updateLiveStatus(msg.status);
             } else if (msg.type === 'test_conn_result') {
                 alert(msg.success ? 'Connessione stabilita con successo!' : 'Errore: stampante non raggiungibile.');
+            } else if (msg.type === 'breakdown_ready') {
+                const job = allJobs.find(item => item.job_id === msg.jobId || item.filename === msg.filename);
+                if (job && msg.breakdown) {
+                    job.breakdown = msg.breakdown;
+                    if (selectedJobId === job.job_id) {
+                        openInspector(job.job_id);
+                    }
+                    filterJobs();
+                }
             }
         });
+
+        function requestBreakdown(jobId, filename) {
+            const btn = document.getElementById('btnCalcBreakdown');
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = '<span class="live-pulse" style="display:inline-block; margin-right:6px;"></span>Analisi G-Code e ripartizione in corso...';
+            }
+            sendToHost('get_breakdown', { jobId, filename });
+        }
 
         function sendToHost(action, payload = {}) {
             if (window.chrome?.webview) {
@@ -1614,6 +1746,22 @@
                     layerBox.style.display = 'none';
                 }
 
+                // Multi-filament & breakdown in live banner
+                const filRow = document.getElementById('liveFilamentRow');
+                if (filRow) {
+                    if (st.filaments && st.filaments.length > 1) {
+                        filRow.style.display = 'flex';
+                        const dots = st.filaments.map(f => `<span class="color-dot" style="background:${f.color_hex};" title="${f.name}: ${f.used_g}g (${f.pct}%)"></span>`).join('');
+                        const bdText = st.breakdown ? ` &bull; 📦 Oggetto ${st.breakdown.model_pct}% &bull; 🌲 Scarto ${st.breakdown.waste_total_pct}%` : '';
+                        filRow.innerHTML = `<span class="tag-pill green" style="display:inline-flex; align-items:center; gap:6px;"><span class="color-dots-group">${dots}</span><strong>Multicolore:</strong> ${st.filaments.length} Colori (${st.filament_changes} cambi)${bdText}</span>`;
+                    } else if (st.breakdown) {
+                        filRow.style.display = 'flex';
+                        filRow.innerHTML = `<span class="tag-pill">📦 <strong>Oggetto:</strong> ${st.breakdown.model_pct}% &bull; 🌲 <strong>Scarto Totale:</strong> ${st.breakdown.waste_total_pct}%</span>`;
+                    } else {
+                        filRow.style.display = 'none';
+                    }
+                }
+
                 // Progress bar
                 const progBox = document.getElementById('liveProgressContainer');
                 if (st.progress_pct > 0 || st.total_layers > 0) {
@@ -1750,6 +1898,7 @@
                     : svgPlaceholder;
 
                 const cost = ((j.filament_g * costPerKg) / 1000.0).toFixed(2);
+                const finalCost = (j.filament_cost_eur && j.filament_cost_eur > 0) ? j.filament_cost_eur.toFixed(2) : cost;
                 const nozzleVal = j.nozzle_diameter !== 'N/D' ? `${j.nozzle_diameter}mm` : '0.4mm';
                 const layerVal = j.layer_height !== 'N/D' ? `${j.layer_height}mm` : 'N/D';
 
@@ -1758,6 +1907,17 @@
                     : '';
 
                 const italianDate = formatItalianDate(j.timestamp, j.start_time);
+
+                let filTag = `<span class="tag-pill green">${j.filament_name}</span>`;
+                if (j.is_multicolor && j.filaments && j.filaments.length > 1) {
+                    const dots = j.filaments.map(f => `<span class="color-dot" style="background:${f.color_hex};" title="${f.name}: ${f.used_g}g (${f.pct}%)"></span>`).join('');
+                    filTag = `<span class="tag-pill green" style="display:inline-flex; align-items:center; gap:6px;"><span class="color-dots-group">${dots}</span><strong>Multicolore:</strong> ${j.filaments.length} Colori (${j.filament_changes} cambi)</span>`;
+                }
+
+                let bdTag = '';
+                if (j.breakdown && j.breakdown.has_breakdown) {
+                    bdTag = `<span class="tag-pill" title="Oggetto: ${j.breakdown.model_g}g (${j.breakdown.model_pct}%) • Supporti/Torre/Brim: ${j.breakdown.waste_total_g}g (${j.breakdown.waste_total_pct}%)">📦 <strong>Oggetto:</strong> ${j.breakdown.model_pct}% &bull; 🌲 <strong>Scarto:</strong> ${j.breakdown.waste_total_pct}%</span>`;
+                }
 
                 return `
                 <div class="feed-row" onclick="openInspector('${j.job_id}')">
@@ -1769,12 +1929,13 @@
                         
                         <!-- CLARIFIED TAGS SPECIFYING EXACT MEANING (NOZZLE, LAYER, INFILL) -->
                         <div class="feed-tags">
-                            <span class="tag-pill green">${j.filament_name}</span>
+                            ${filTag}
                             <span class="tag-pill highlight"><strong>Ugello:</strong> ${nozzleVal}</span>
                             <span class="tag-pill highlight"><strong>Layer:</strong> ${layerVal}</span>
                             <span class="tag-pill"><strong>Infill:</strong> ${j.infill_density !== 'N/D' ? j.infill_density : ''} ${j.infill_pattern}</span>
                             ${j.supports_enabled ? `<span class="tag-pill green"><strong>Supporti:</strong> ${j.support_label.toUpperCase()}</span>` : ''}
                             ${j.has_ironing ? `<span class="tag-pill green">STIRATURA</span>` : ''}
+                            ${bdTag}
                         </div>
                     </div>
 
@@ -1788,7 +1949,7 @@
                     <div class="feed-col-metrics">
                         <div class="metric-duration">${j.print_duration_str} ${deltaSpan}</div>
                         <div class="metric-grams">${j.filament_g.toFixed(1)}g &bull; ${j.filament_m.toFixed(2)}m</div>
-                        <div class="metric-cost">€${cost}</div>
+                        <div class="metric-cost">€${finalCost}</div>
                     </div>
 
                     <div class="feed-col-status">
@@ -1817,6 +1978,7 @@
                     : svgPlaceholder;
 
                 const cost = ((j.filament_g * costPerKg) / 1000.0).toFixed(2);
+                const finalCost = (j.filament_cost_eur && j.filament_cost_eur > 0) ? j.filament_cost_eur.toFixed(2) : cost;
                 const italianDate = formatItalianDate(j.timestamp, j.start_time);
                 const nozzleVal = j.nozzle_diameter !== 'N/D' ? `${j.nozzle_diameter}mm` : '0.4mm';
                 const layerVal = j.layer_height !== 'N/D' ? `${j.layer_height}mm` : 'N/D';
@@ -1828,14 +1990,18 @@
                         <span class="status-badge ${j.status}" style="position:absolute; top:8px; right:8px;">${j.status_label}</span>
                     </div>
                     <div class="gallery-body">
-                        <div style="font-size:15px; font-weight:700; color:var(--fg-white); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${j.project_name}</div>
+                        <div style="font-size:15px; font-weight:700; color:var(--fg-white); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:flex; align-items:center; justify-content:space-between;">
+                            <span>${j.project_name}</span>
+                            ${j.is_multicolor && j.filaments && j.filaments.length > 1 ? `<span class="color-dots-group">${j.filaments.map(f => `<span class="color-dot" style="background:${f.color_hex};"></span>`).join('')}</span>` : ''}
+                        </div>
                         <div style="display:flex; justify-content:space-between; font-family:var(--font-mono); font-size:13px; margin: 3px 0;">
                             <span style="color:var(--fg-white); font-weight:700;">${j.print_duration_str}</span>
-                            <span style="color:var(--green-bright); font-weight:700;">€${cost}</span>
+                            <span style="color:var(--green-bright); font-weight:700;">€${finalCost}</span>
                         </div>
                         <div style="display:flex; flex-wrap:wrap; gap:5px; margin: 4px 0;">
                             <span class="tag-pill highlight"><strong>Ugello:</strong> ${nozzleVal}</span>
                             <span class="tag-pill highlight"><strong>Layer:</strong> ${layerVal}</span>
+                            ${j.breakdown && j.breakdown.has_breakdown ? `<span class="tag-pill" style="font-size:11px;">📦 ${j.breakdown.model_pct}%</span>` : ''}
                         </div>
                         <div style="font-size:13px; font-weight:600; color:var(--fg-white); margin-top:4px;">
                             ${italianDate}
@@ -1889,6 +2055,7 @@
                     : `<div class="table-thumb" style="display:flex;align-items:center;justify-content:center;">${svgPlaceholder}</div>`;
 
                 const cost = ((j.filament_g * costPerKg) / 1000.0).toFixed(2);
+                const finalCost = (j.filament_cost_eur && j.filament_cost_eur > 0) ? j.filament_cost_eur.toFixed(2) : cost;
                 const italianDate = formatItalianDate(j.timestamp, j.start_time);
 
                 return `
@@ -1900,6 +2067,20 @@
                     <td style="font-family:var(--font-mono); font-weight:600;"><span style="color:var(--fg-muted); font-size:11px;">Ugello:</span> ${j.nozzle_diameter} mm</td>
                     <td style="font-family:var(--font-mono); font-weight:600;"><span style="color:var(--fg-muted); font-size:11px;">Layer:</span> ${j.layer_height} mm</td>
                     <td style="max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family:var(--font-mono); color:var(--fg-muted);" title="${j.print_profile}">${j.print_profile}</td>
+                    <td style="font-family:var(--font-mono); font-size:13px;"><span style="color:var(--fg-muted); font-size:11px;">Infill:</span> ${j.infill_density} (${j.infill_pattern})</td>
+                    <td style="font-size:13px;">${j.supports_enabled ? j.support_label : 'No'}</td>
+                    <td style="font-family:var(--font-mono); font-weight:700; color:var(--fg-white); font-size:14px;">${j.print_duration_str}</td>
+                    <td style="font-family:var(--font-mono); color:var(--fg-faint); font-size:13px;">${j.time_est_str}</td>
+                    <td style="font-family:var(--font-mono); font-size:13px;">${j.filament_g.toFixed(1)}g</td>
+                    <td style="font-family:var(--font-mono); font-weight:700; color:var(--green-bright); font-size:14px;">€${finalCost}</td>
+                    <td title="${j.filament_name}">
+                        ${j.is_multicolor && j.filaments && j.filaments.length > 1 
+                            ? `<span class="tag-pill green" style="display:inline-flex; align-items:center; gap:5px;"><span class="color-dots-group">${j.filaments.map(f => `<span class="color-dot" style="background:${f.color_hex};"></span>`).join('')}</span>${j.filaments.length} Colori</span>`
+                            : `<span class="tag-pill green">${j.filament_type}</span>`}
+                    </td>
+                </tr>
+                `;
+            }).join('');
                     <td style="font-family:var(--font-mono); font-size:13px;"><span style="color:var(--fg-muted); font-size:11px;">Infill:</span> ${j.infill_density} (${j.infill_pattern})</td>
                     <td style="font-size:13px;">${j.supports_enabled ? j.support_label : 'No'}</td>
                     <td style="font-family:var(--font-mono); font-weight:700; color:var(--fg-white); font-size:14px;">${j.print_duration_str}</td>
@@ -2013,7 +2194,136 @@
             }
 
             const cost = ((j.filament_g * costPerKg) / 1000.0).toFixed(2);
+            const finalCost = (j.filament_cost_eur && j.filament_cost_eur > 0) ? j.filament_cost_eur.toFixed(2) : cost;
             const italianDate = formatItalianDate(j.timestamp, j.start_time);
+
+            // 1. MULTI-FILAMENT & COLOR BREAKDOWN SECTION
+            let filSection = '';
+            if (j.filaments && j.filaments.length > 0) {
+                const isMulti = j.is_multicolor || j.filaments.length > 1;
+                const title = isMulti
+                    ? `Multi-Filamento & Colori Usati (${j.filaments.length} Colori • ${j.filament_changes} Cambi)`
+                    : `Filamento & Materiale Usato`;
+
+                let barSlices = j.filaments.map(f => 
+                    `<div class="segment-bar-slice" style="width:${f.pct}%; background:${f.color_hex};" title="${f.name} (${f.type}): ${f.used_g}g (${f.pct}%)"></div>`
+                ).join('');
+
+                let cardRows = j.filaments.map((f, idx) => `
+                    <div class="filament-card-row">
+                        <div style="display:flex; align-items:center; gap:10px;">
+                            <span class="color-dot large" style="background:${f.color_hex};"></span>
+                            <div>
+                                <div style="font-weight:700; color:var(--fg-white); font-size:13px;">${f.name}</div>
+                                <div style="font-family:var(--font-mono); font-size:11px; color:var(--fg-muted);">Slot #${idx + 1} &bull; ${f.type} &bull; ${f.color_hex}</div>
+                            </div>
+                        </div>
+                        <div style="text-align:right; font-family:var(--font-mono);">
+                            <div style="font-weight:700; color:var(--fg-white); font-size:13px;">${f.used_g.toFixed(1)} g <span style="color:var(--green-bright); font-size:12px;">(${f.pct}%)</span></div>
+                            <div style="font-size:11px; color:var(--fg-muted);">${f.used_m.toFixed(2)} m &bull; €${f.cost_eur.toFixed(2)}</div>
+                        </div>
+                    </div>
+                `).join('');
+
+                filSection = `
+                    <div class="spec-block-title">${title}</div>
+                    <div class="segment-bar">${barSlices}</div>
+                    <div style="margin-top:8px;">${cardRows}</div>
+                    <div style="display:flex; justify-content:space-between; font-family:var(--font-mono); font-size:12px; padding:6px 10px; background:var(--bg-base); border-radius:4px; border:1px solid var(--border); margin-top:4px;">
+                        <span style="color:var(--fg-muted);">Totale Filamento: <strong style="color:var(--fg-white);">${j.filament_g.toFixed(1)} g</strong> (${j.filament_m.toFixed(2)} m)</span>
+                        <span style="color:var(--green-bright); font-weight:700;">Spesa Filamento: €${finalCost}</span>
+                    </div>
+                `;
+            }
+
+            // 2. FEATURE BREAKDOWN SECTION: FINISHED MODEL VS SUPPORTS, TOWER & BRIM
+            let breakdownSection = '';
+            if (j.breakdown && j.breakdown.has_breakdown) {
+                const bd = j.breakdown;
+                breakdownSection = `
+                    <div class="spec-block-title">Ripartizione: Oggetto Stampato vs Supporti & Scarto</div>
+                    <div class="segment-bar">
+                        <div class="segment-bar-slice" style="width:${bd.model_pct}%; background:#10B981;" title="Oggetto Stampato: ${bd.model_g}g (${bd.model_pct}%)"></div>
+                        <div class="segment-bar-slice" style="width:${bd.prime_tower_pct}%; background:#8B5CF6;" title="Prime/Wipe Tower: ${bd.prime_tower_g}g (${bd.prime_tower_pct}%)"></div>
+                        <div class="segment-bar-slice" style="width:${bd.support_pct}%; background:#F59E0B;" title="Supporti: ${bd.support_g}g (${bd.support_pct}%)"></div>
+                        <div class="segment-bar-slice" style="width:${bd.brim_pct}%; background:#3B82F6;" title="Brim/Adesione: ${bd.brim_g}g (${bd.brim_pct}%)"></div>
+                    </div>
+
+                    <div class="breakdown-summary-grid">
+                        <div class="breakdown-card model">
+                            <div class="breakdown-card-title" style="color:var(--green-bright);">
+                                <span>📦</span> OGGETTO FINITO (NETTO)
+                            </div>
+                            <div class="breakdown-card-num">${bd.model_g.toFixed(1)} g <span style="font-size:13px; color:var(--green-bright);">(${bd.model_pct}%)</span></div>
+                            <div class="breakdown-card-sub">Costo filamento: €${bd.model_cost_eur.toFixed(2)}</div>
+                        </div>
+                        <div class="breakdown-card waste">
+                            <div class="breakdown-card-title" style="color:#F59E0B;">
+                                <span>🌲</span> SCARTO & AUSILIARI (TOTALE)
+                            </div>
+                            <div class="breakdown-card-num">${bd.waste_total_g.toFixed(1)} g <span style="font-size:13px; color:#F59E0B;">(${bd.waste_total_pct}%)</span></div>
+                            <div class="breakdown-card-sub">Costo ausiliari: €${bd.waste_total_cost_eur.toFixed(2)}</div>
+                        </div>
+                    </div>
+
+                    <div style="margin-top:8px;">
+                        <div class="breakdown-item-row">
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <span class="color-dot" style="background:#10B981;"></span>
+                                <span style="font-weight:600; color:var(--fg-white);">Oggetto Stampato (Modello Effettivo)</span>
+                            </div>
+                            <div style="font-family:var(--font-mono); text-align:right;">
+                                <strong>${bd.model_g.toFixed(1)} g</strong> (${bd.model_pct}%) &bull; <span style="color:var(--green-bright);">€${bd.model_cost_eur.toFixed(2)}</span>
+                            </div>
+                        </div>
+
+                        ${bd.prime_tower_g > 0 || bd.prime_tower_pct > 0 ? `
+                        <div class="breakdown-item-row">
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <span class="color-dot" style="background:#8B5CF6;"></span>
+                                <span style="font-weight:600; color:var(--fg-white);">Prime Tower (Torre di Spurgo Cambi Colore)</span>
+                            </div>
+                            <div style="font-family:var(--font-mono); text-align:right;">
+                                <strong>${bd.prime_tower_g.toFixed(1)} g</strong> (${bd.prime_tower_pct}%) &bull; <span style="color:var(--fg-muted);">€${bd.prime_tower_cost_eur.toFixed(2)}</span>
+                            </div>
+                        </div>` : ''}
+
+                        ${bd.support_g > 0 || bd.support_pct > 0 ? `
+                        <div class="breakdown-item-row">
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <span class="color-dot" style="background:#F59E0B;"></span>
+                                <span style="font-weight:600; color:var(--fg-white);">Supporti & Strutture di Sostegno</span>
+                            </div>
+                            <div style="font-family:var(--font-mono); text-align:right;">
+                                <strong>${bd.support_g.toFixed(1)} g</strong> (${bd.support_pct}%) &bull; <span style="color:var(--fg-muted);">€${bd.support_cost_eur.toFixed(2)}</span>
+                            </div>
+                        </div>` : ''}
+
+                        ${bd.brim_g > 0 || bd.brim_pct > 0 ? `
+                        <div class="breakdown-item-row">
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <span class="color-dot" style="background:#3B82F6;"></span>
+                                <span style="font-weight:600; color:var(--fg-white);">Brim & Skirt (Adesione al Piatto)</span>
+                            </div>
+                            <div style="font-family:var(--font-mono); text-align:right;">
+                                <strong>${bd.brim_g.toFixed(1)} g</strong> (${bd.brim_pct}%) &bull; <span style="color:var(--fg-muted);">€${bd.brim_cost_eur.toFixed(2)}</span>
+                            </div>
+                        </div>` : ''}
+                    </div>
+                `;
+            } else {
+                breakdownSection = `
+                    <div class="spec-block-title">Ripartizione: Oggetto Stampato vs Supporti & Scarto</div>
+                    <div style="background:var(--bg-base); border:1px solid var(--border); border-radius:6px; padding:12px; text-align:center;">
+                        <div style="font-size:13px; color:var(--fg-muted); margin-bottom:8px;">
+                            Vuoi calcolare la suddivisione esatta tra filamento dell'oggetto e filamento consumato in supporti, torre di spurgo e brim?
+                        </div>
+                        <button class="btn btn-green" id="btnCalcBreakdown" onclick="requestBreakdown('${j.job_id}', '${j.filename}')" style="display:inline-flex; align-items:center; gap:6px;">
+                            ⚡ Analizza G-Code & Calcola Ripartizione
+                        </button>
+                    </div>
+                `;
+            }
 
             const detailsHtml = `
                 <div class="spec-block-title">Configurazione Slicer & Profilazione</div>
@@ -2025,6 +2335,10 @@
                     <div class="spec-row"><span class="spec-k">Piano di Stampa</span><span class="spec-v">${j.bed_type}</span></div>
                     <div class="spec-row"><span class="spec-k">Dimensione G-Code</span><span class="spec-v">${j.file_size_mb !== 'N/D' ? j.file_size_mb + ' MB' : 'N/D'}</span></div>
                 </div>
+
+                ${filSection}
+
+                ${breakdownSection}
 
                 <div class="spec-block-title">Geometria, Struttura & Supporti</div>
                 <div class="spec-grid-2">
@@ -2052,7 +2366,7 @@
                 <div class="spec-grid-2">
                     <div class="spec-row"><span class="spec-k">Filamento Estruso (Massa)</span><span class="spec-v" style="color:var(--fg-white); font-weight:600;">${j.filament_g.toFixed(1)} g</span></div>
                     <div class="spec-row"><span class="spec-k">Filamento Estruso (Lunghezza)</span><span class="spec-v">${j.filament_m.toFixed(2)} m</span></div>
-                    <div class="spec-row"><span class="spec-k">Costo Calcolato</span><span class="spec-v" style="color:var(--green-bright); font-weight:600;">€${cost} (@${costPerKg.toFixed(1)}/kg)</span></div>
+                    <div class="spec-row"><span class="spec-k">Costo Calcolato</span><span class="spec-v" style="color:var(--green-bright); font-weight:600;">€${finalCost} (@${costPerKg.toFixed(1)}/kg)</span></div>
                     <div class="spec-row"><span class="spec-k">Identificativo Filamento</span><span class="spec-v">${j.filament_name} (${j.filament_type})</span></div>
                     <div class="spec-row"><span class="spec-k">Durata Stampa Reale</span><span class="spec-v" style="color:var(--fg-white); font-weight:600;">${j.print_duration_str}</span></div>
                     <div class="spec-row"><span class="spec-k">Stima Slicer vs Reale</span><span class="spec-v">${j.time_est_str} ${j.delta_str ? '(' + j.delta_str + ')' : ''}</span></div>

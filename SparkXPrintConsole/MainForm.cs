@@ -266,6 +266,28 @@ namespace SparkXPrintConsole
                         _settings.CostPerKg = root.GetProperty("costPerKg").GetDouble();
                         _settings.Save();
                         break;
+
+                    case "get_breakdown":
+                        var jobId = root.TryGetProperty("jobId", out var jIdEl) ? jIdEl.GetString() : null;
+                        var bFilename = root.TryGetProperty("filename", out var fnEl) ? fnEl.GetString() : null;
+                        if (!string.IsNullOrEmpty(bFilename))
+                        {
+                            var job = _currentJobs.FirstOrDefault(x => x.JobId == jobId || x.Filename == bFilename);
+                            var totalG = job?.FilamentG ?? 0.0;
+                            var totalCost = job?.FilamentCostEur ?? (totalG * _settings.CostPerKg / 1000.0);
+                            var bd = await PrinterService.ComputeFeatureBreakdownAsync(
+                                _settings.PrinterIp, _settings.PrinterPort, bFilename, totalG, totalCost,
+                                job?.SupportsEnabled == true ? "1" : "0",
+                                job?.IsMulticolor == true ? "1" : "0",
+                                job?.BrimType, job?.BrimWidth);
+                            if (bd != null && job != null)
+                            {
+                                job.Breakdown = bd;
+                                PrinterService.SaveCachedHistory(_currentJobs);
+                            }
+                            PostJsonToWeb(new { type = "breakdown_ready", jobId = jobId, filename = bFilename, breakdown = bd });
+                        }
+                        break;
                 }
             }
             catch (Exception ex)

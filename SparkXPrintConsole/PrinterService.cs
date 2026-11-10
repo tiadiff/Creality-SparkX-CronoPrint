@@ -15,6 +15,7 @@ namespace SparkXPrintConsole
     {
         private static readonly HttpClient Http = new HttpClient { Timeout = TimeSpan.FromSeconds(6) };
         private static readonly string CacheFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "history_cache.json");
+        private static readonly string BreakdownCacheFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "feature_breakdown_cache.json");
         private static readonly ConcurrentDictionary<string, FileMetadata> ActiveFileMetaCache = new();
 
         public static async Task<LivePrinterStatus> GetLiveStatusAsync(string ip, int port, Dictionary<string, string>? thumbCache = null)
@@ -155,11 +156,56 @@ namespace SparkXPrintConsole
                         {
                             status.Thumbnail = t;
                         }
-                        else if (ActiveFileMetaCache.TryGetValue(status.Filename, out var m))
+
+                        if (ActiveFileMetaCache.TryGetValue(status.Filename, out var m))
                         {
-                            status.Thumbnail = m.Thumbnail;
+                            if (string.IsNullOrEmpty(status.Thumbnail)) status.Thumbnail = m.Thumbnail;
                             status.TimeEstStr = m.TimeEst ?? "N/D";
                             if (status.TotalLayers == 0 && m.TotalLayers.HasValue) status.TotalLayers = m.TotalLayers.Value;
+
+                            status.IsMulticolor = m.FilamentColors.Count > 1 || m.FilamentGramsList.Count > 1;
+                            status.FilamentChanges = m.TotalFilamentChanges;
+
+                            var totalPlannedG = m.TotalFilamentGrams ?? (m.FilamentGramsList.Count > 0 ? m.FilamentGramsList.Sum() : (m.FilamentGEst ?? 0.0));
+                            var filList = new List<FilamentColorInfo>();
+                            int slotCount = Math.Max(m.FilamentGramsList.Count, Math.Max(m.FilamentColors.Count, 1));
+                            for (int i = 0; i < slotCount; i++)
+                            {
+                                double g = (i < m.FilamentGramsList.Count) ? m.FilamentGramsList[i] : (slotCount == 1 ? totalPlannedG : 0.0);
+                                if (slotCount > 1 && g <= 0.05) continue;
+                                double meters = (i < m.FilamentMetersList.Count) ? m.FilamentMetersList[i] : 0.0;
+                                double cost = (i < m.FilamentCostsList.Count) ? m.FilamentCostsList[i] : 0.0;
+                                string hex = (i < m.FilamentColors.Count) ? m.FilamentColors[i] : (i == 0 ? "#10B981" : "#3B82F6");
+                                string type = (i < m.FilamentTypes.Count) ? m.FilamentTypes[i] : (m.FilamentType ?? "PLA");
+                                string name = (i < m.FilamentNames.Count) ? m.FilamentNames[i] : (m.FilamentName ?? "Standard");
+                                double pct = totalPlannedG > 0 ? (g / totalPlannedG) * 100.0 : 100.0;
+
+                                filList.Add(new FilamentColorInfo
+                                {
+                                    Index = i,
+                                    ColorHex = hex,
+                                    Name = name,
+                                    Type = type,
+                                    UsedG = Math.Round(g, 2),
+                                    UsedM = Math.Round(meters, 2),
+                                    CostEur = Math.Round(cost, 2),
+                                    Pct = Math.Round(pct, 1)
+                                });
+                            }
+                            status.Filaments = filList;
+
+                            var cache = LoadFeatureBreakdownCache();
+                            var key = Path.GetFileName(status.Filename);
+                            if (cache.TryGetValue(key, out var cachedEntry))
+                            {
+                                status.Breakdown = BuildBreakdownFromPercentages(
+                                    cachedEntry.ModelPct, cachedEntry.SupportPct, cachedEntry.PrimeTowerPct, cachedEntry.BrimPct,
+                                    totalPlannedG, m.TotalFilamentCost ?? 0.0);
+                            }
+                            else if (m.EnableSupport == "0" && m.EnablePrimeTower != "1" && (m.BrimType == "no_brim" || m.BrimWidth == "0" || string.IsNullOrEmpty(m.BrimWidth)))
+                            {
+                                status.Breakdown = BuildBreakdownFromPercentages(100.0, 0.0, 0.0, 0.0, totalPlannedG, m.TotalFilamentCost ?? 0.0);
+                            }
                         }
                         else if (status.IsPrinting)
                         {
@@ -288,11 +334,89 @@ namespace SparkXPrintConsole
                 var filM = filMm / 1000.0;
                 var density = m?.Density ?? 1.24;
                 var calcGrams = (filMm * Math.PI * Math.Pow(1.75 / 2.0, 2) / 1000.0) * density;
-                var actualGrams = calcGrams > 0 ? calcGrams : (m?.FilamentGEst ?? 0.0);
+                var actualGrams = (status == "completed" && m?.TotalFilamentGrams.HasValue == true)
+                    ? m.TotalFilamentGrams.Value
+                    : (calcGrams > 0 ? calcGrams : (m?.FilamentGEst ?? 0.0));
 
-                var costEur = (m?.FilamentCostEst != null && status == "completed")
-                    ? m.FilamentCostEst.Value
-                    : actualGrams * (costPerKg / 1000.0);
+                var costEur = (m?.TotalFilamentCost != null && status == "completed")
+                    ? m.TotalFilamentCost.Value
+                    : ((m?.FilamentCostEst != null && status == "completed")
+                        ? m.FilamentCostEst.Value
+                        : actualGrams * (costPerKg / 1000.0));
+
+                var filList = new List<FilamentColorInfo>();
+                var gramsList = m?.FilamentGramsList ?? new List<double>();
+                var metersList = m?.FilamentMetersList ?? new List<double>();
+                var costsList = m?.FilamentCostsList ?? new List<double>();
+                var colorsList = m?.FilamentColors ?? new List<string>();
+                var typesList = m?.FilamentTypes ?? new List<string>();
+                var namesList = m?.FilamentNames ?? new List<string>();
+
+                double totalG = actualGrams > 0 ? actualGrams : (m?.TotalFilamentGrams ?? (gramsList.Count > 0 ? gramsList.Sum() : 0.0));
+
+                int slotCount = Math.Max(gramsList.Count, Math.Max(colorsList.Count, 1));
+                for (int i = 0; i < slotCount; i++)
+                {
+                    double g = (i < gramsList.Count) ? gramsList[i] : (slotCount == 1 ? totalG : 0.0);
+                    if (slotCount > 1 && g <= 0.05) continue;
+
+                    double meters = (i < metersList.Count) ? metersList[i] : (totalG > 0 ? (g / totalG) * filM : filM);
+                    double cost = (i < costsList.Count) ? costsList[i] : g * (costPerKg / 1000.0);
+                    string hex = (i < colorsList.Count) ? colorsList[i] : (i == 0 ? "#10B981" : "#3B82F6");
+                    string type = (i < typesList.Count) ? typesList[i] : (m?.FilamentType ?? "PLA");
+                    string name = (i < namesList.Count) ? namesList[i] : (m?.FilamentName ?? "Standard");
+                    double pct = totalG > 0 ? (g / totalG) * 100.0 : 100.0;
+
+                    filList.Add(new FilamentColorInfo
+                    {
+                        Index = i,
+                        ColorHex = hex,
+                        Name = name,
+                        Type = type,
+                        UsedG = Math.Round(g, 2),
+                        UsedM = Math.Round(meters, 2),
+                        CostEur = Math.Round(cost, 2),
+                        Pct = Math.Round(pct, 1)
+                    });
+                }
+
+                if (filList.Count == 0)
+                {
+                    filList.Add(new FilamentColorInfo
+                    {
+                        Index = 0,
+                        ColorHex = colorsList.Count > 0 ? colorsList[0] : "#10B981",
+                        Name = m?.FilamentName ?? "Standard",
+                        Type = m?.FilamentType ?? "PLA",
+                        UsedG = Math.Round(totalG, 2),
+                        UsedM = Math.Round(filM, 2),
+                        CostEur = Math.Round(costEur, 2),
+                        Pct = 100.0
+                    });
+                }
+
+                PrintFeatureBreakdown? itemBreakdown = null;
+                if (m?.Breakdown != null)
+                {
+                    itemBreakdown = BuildBreakdownFromPercentages(
+                        m.Breakdown.ModelPct, m.Breakdown.SupportPct, m.Breakdown.PrimeTowerPct, m.Breakdown.BrimPct,
+                        actualGrams, costEur);
+                }
+                else
+                {
+                    var cache = LoadFeatureBreakdownCache();
+                    var key = Path.GetFileName(fname);
+                    if (cache.TryGetValue(key, out var cachedEntry))
+                    {
+                        itemBreakdown = BuildBreakdownFromPercentages(
+                            cachedEntry.ModelPct, cachedEntry.SupportPct, cachedEntry.PrimeTowerPct, cachedEntry.BrimPct,
+                            actualGrams, costEur);
+                    }
+                    else if (m?.EnableSupport == "0" && m?.EnablePrimeTower != "1" && (m?.BrimType == "no_brim" || m?.BrimWidth == "0" || string.IsNullOrEmpty(m?.BrimWidth)))
+                    {
+                        itemBreakdown = BuildBreakdownFromPercentages(100.0, 0.0, 0.0, 0.0, actualGrams, costEur);
+                    }
+                }
 
                 var startDt = startTs > 0 ? DateTimeOffset.FromUnixTimeSeconds((long)startTs).ToLocalTime() : (DateTimeOffset?)null;
                 var endDt = endTs > 0 ? DateTimeOffset.FromUnixTimeSeconds((long)endTs).ToLocalTime() : (DateTimeOffset?)null;
@@ -333,8 +457,12 @@ namespace SparkXPrintConsole
                     FilamentM = Math.Round(filM, 2),
                     FilamentG = Math.Round(actualGrams, 1),
                     FilamentCostEur = Math.Round(costEur, 2),
-                    FilamentType = m?.FilamentType ?? "PLA",
-                    FilamentName = m?.FilamentName ?? "Standard",
+                    FilamentType = filList.Count > 1 ? string.Join(", ", filList.Select(f => f.Type).Distinct()) : (m?.FilamentType ?? "PLA"),
+                    FilamentName = filList.Count > 1 ? $"{filList.Count} Colori ({string.Join(", ", filList.Select(f => f.Name))})" : (m?.FilamentName ?? "Standard"),
+                    Filaments = filList,
+                    IsMulticolor = filList.Count > 1,
+                    FilamentChanges = m?.TotalFilamentChanges ?? 0,
+                    Breakdown = itemBreakdown,
                     Thumbnail = m?.Thumbnail,
                     Slicer = m?.Slicer ?? "Creality Print",
                     TotalLayers = m?.TotalLayers?.ToString() ?? "N/D",
@@ -432,7 +560,7 @@ namespace SparkXPrintConsole
             {
                 try
                 {
-                    var startByte = Math.Max(0, meta.FileSize - 76800);
+                    var startByte = Math.Max(0, meta.FileSize - 163840);
                     using var reqTail = new HttpRequestMessage(HttpMethod.Get, url);
                     reqTail.Headers.Range = new RangeHeaderValue(startByte, meta.FileSize);
                     using var respTail = await Http.SendAsync(reqTail);
@@ -449,22 +577,97 @@ namespace SparkXPrintConsole
                         var k = parts[0].Trim();
                         var v = parts[1].Trim().Trim('\"');
 
-                        if (k is "total filament used [g]" or "filament used [g]")
+                        if (k == "total filament used [g]")
                         {
                             var s = v.Split(',')[0].Trim();
-                            if (double.TryParse(s, System.Globalization.CultureInfo.InvariantCulture, out var g)) meta.FilamentGEst = g;
+                            if (double.TryParse(s, System.Globalization.CultureInfo.InvariantCulture, out var g))
+                            {
+                                meta.TotalFilamentGrams = g;
+                                if (meta.FilamentGEst == null || meta.FilamentGEst == 0) meta.FilamentGEst = g;
+                            }
                         }
-                        else if (k is "total filament cost" or "filament cost")
+                        else if (k == "filament used [g]")
+                        {
+                            var items = v.Split(',');
+                            var list = new List<double>();
+                            foreach (var item in items)
+                            {
+                                if (double.TryParse(item.Trim(), System.Globalization.CultureInfo.InvariantCulture, out var val))
+                                    list.Add(val);
+                            }
+                            if (list.Count > 0)
+                            {
+                                meta.FilamentGramsList = list;
+                                if (meta.FilamentGEst == null || meta.FilamentGEst == 0) meta.FilamentGEst = list[0];
+                            }
+                        }
+                        else if (k == "filament used [mm]")
+                        {
+                            var items = v.Split(',');
+                            var list = new List<double>();
+                            foreach (var item in items)
+                            {
+                                if (double.TryParse(item.Trim(), System.Globalization.CultureInfo.InvariantCulture, out var val))
+                                    list.Add(val / 1000.0);
+                            }
+                            if (list.Count > 0) meta.FilamentMetersList = list;
+                        }
+                        else if (k == "total filament cost")
                         {
                             var s = v.Split(',')[0].Trim();
-                            if (double.TryParse(s, System.Globalization.CultureInfo.InvariantCulture, out var c)) meta.FilamentCostEst = c;
+                            if (double.TryParse(s, System.Globalization.CultureInfo.InvariantCulture, out var c))
+                            {
+                                meta.TotalFilamentCost = c;
+                                if (meta.FilamentCostEst == null || meta.FilamentCostEst == 0) meta.FilamentCostEst = c;
+                            }
+                        }
+                        else if (k == "filament cost")
+                        {
+                            var items = v.Split(',');
+                            var list = new List<double>();
+                            foreach (var item in items)
+                            {
+                                if (double.TryParse(item.Trim(), System.Globalization.CultureInfo.InvariantCulture, out var val))
+                                    list.Add(val);
+                            }
+                            if (list.Count > 0)
+                            {
+                                meta.FilamentCostsList = list;
+                                if (meta.FilamentCostEst == null || meta.FilamentCostEst == 0) meta.FilamentCostEst = list[0];
+                            }
+                        }
+                        else if (k == "total filament change")
+                        {
+                            if (int.TryParse(v.Trim(), out var ch)) meta.TotalFilamentChanges = ch;
+                        }
+                        else if (k is "filament_colour" or "default_filament_colour")
+                        {
+                            if (meta.FilamentColors.Count == 0 || k == "filament_colour")
+                            {
+                                var cols = v.Split(new[] { ';', ',' }, StringSplitOptions.RemoveEmptyEntries);
+                                meta.FilamentColors = cols.Select(c => c.Trim().Trim('\"')).Where(c => c.StartsWith("#") || c.Length >= 4).ToList();
+                            }
+                        }
+                        else if (k == "filament_settings_id")
+                        {
+                            var names = v.Split(';');
+                            meta.FilamentNames = names.Select(n => n.Trim().Trim('\"')).Where(n => !string.IsNullOrEmpty(n)).ToList();
+                            if (meta.FilamentNames.Count > 0) meta.FilamentName = meta.FilamentNames[0];
+                        }
+                        else if (k == "filament_type")
+                        {
+                            var types = v.Split(';');
+                            meta.FilamentTypes = types.Select(t => t.Trim().Trim('\"')).Where(t => !string.IsNullOrEmpty(t)).ToList();
+                            if (meta.FilamentTypes.Count > 0) meta.FilamentType = meta.FilamentTypes[0];
+                        }
+                        else if (k == "enable_prime_tower")
+                        {
+                            meta.EnablePrimeTower = v.Trim();
                         }
                         else if (k.Contains("estimated printing time", StringComparison.OrdinalIgnoreCase) && string.IsNullOrEmpty(meta.TimeEst))
                         {
                             meta.TimeEst = v;
                         }
-                        else if (k == "filament_type") meta.FilamentType = v.Split(';')[0].Trim();
-                        else if (k == "filament_settings_id") meta.FilamentName = v.Split(';')[0].Trim();
                         else if (k == "print_settings_id") meta.PrintSettingsId = v;
                         else if (k == "printer_settings_id") meta.PrinterSettingsId = v;
                         else if (k == "nozzle_diameter") meta.NozzleDiameter = v.Split(',')[0].Trim();
@@ -521,6 +724,190 @@ namespace SparkXPrintConsole
             await stream.CopyToAsync(fileStream);
         }
 
+        public static Dictionary<string, FeatureBreakdownPercentCache> LoadFeatureBreakdownCache()
+        {
+            try
+            {
+                if (File.Exists(BreakdownCacheFile))
+                {
+                    var json = File.ReadAllText(BreakdownCacheFile);
+                    var res = JsonSerializer.Deserialize<Dictionary<string, FeatureBreakdownPercentCache>>(json);
+                    if (res != null) return res;
+                }
+            }
+            catch { }
+            return new Dictionary<string, FeatureBreakdownPercentCache>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        public static void SaveFeatureBreakdownCache(Dictionary<string, FeatureBreakdownPercentCache> cache)
+        {
+            try
+            {
+                var json = JsonSerializer.Serialize(cache, new JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(BreakdownCacheFile, json);
+            }
+            catch { }
+        }
+
+        public static PrintFeatureBreakdown BuildBreakdownFromPercentages(
+            double modelPct, double supportPct, double primeTowerPct, double brimPct,
+            double totalG, double totalCost)
+        {
+            var modelG = Math.Round(totalG * (modelPct / 100.0), 1);
+            var supportG = Math.Round(totalG * (supportPct / 100.0), 1);
+            var primeTowerG = Math.Round(totalG * (primeTowerPct / 100.0), 1);
+            var brimG = Math.Round(totalG * (brimPct / 100.0), 1);
+            var wasteTotalG = Math.Round(supportG + primeTowerG + brimG, 1);
+            var wasteTotalPct = Math.Round(supportPct + primeTowerPct + brimPct, 1);
+
+            var modelCost = Math.Round(totalCost * (modelPct / 100.0), 2);
+            var supportCost = Math.Round(totalCost * (supportPct / 100.0), 2);
+            var primeTowerCost = Math.Round(totalCost * (primeTowerPct / 100.0), 2);
+            var brimCost = Math.Round(totalCost * (brimPct / 100.0), 2);
+            var wasteTotalCost = Math.Round(supportCost + primeTowerCost + brimCost, 2);
+
+            return new PrintFeatureBreakdown
+            {
+                ModelG = modelG,
+                ModelPct = Math.Round(modelPct, 1),
+                ModelCostEur = modelCost,
+                SupportG = supportG,
+                SupportPct = Math.Round(supportPct, 1),
+                SupportCostEur = supportCost,
+                PrimeTowerG = primeTowerG,
+                PrimeTowerPct = Math.Round(primeTowerPct, 1),
+                PrimeTowerCostEur = primeTowerCost,
+                BrimG = brimG,
+                BrimPct = Math.Round(brimPct, 1),
+                BrimCostEur = brimCost,
+                WasteTotalG = wasteTotalG,
+                WasteTotalPct = wasteTotalPct,
+                WasteTotalCostEur = wasteTotalCost,
+                HasBreakdown = true
+            };
+        }
+
+        public static async Task<PrintFeatureBreakdown?> ComputeFeatureBreakdownAsync(
+            string ip, int port, string relPath, double totalG, double totalCostEur,
+            string? enableSupport = null, string? enablePrimeTower = null,
+            string? brimType = null, string? brimWidth = null)
+        {
+            var key = Path.GetFileName(relPath);
+            var cache = LoadFeatureBreakdownCache();
+            if (cache.TryGetValue(key, out var cachedEntry))
+            {
+                return BuildBreakdownFromPercentages(cachedEntry.ModelPct, cachedEntry.SupportPct, cachedEntry.PrimeTowerPct, cachedEntry.BrimPct, totalG, totalCostEur);
+            }
+
+            // Fast-path: When there is no support, no prime tower, and no brim, 100% of filament is model
+            if (enableSupport == "0" && enablePrimeTower != "1" &&
+                (brimType == "no_brim" || brimWidth == "0" || string.IsNullOrEmpty(brimWidth)))
+            {
+                var fastEntry = new FeatureBreakdownPercentCache { ModelPct = 100.0, SupportPct = 0.0, PrimeTowerPct = 0.0, BrimPct = 0.0 };
+                cache[key] = fastEntry;
+                SaveFeatureBreakdownCache(cache);
+                return BuildBreakdownFromPercentages(100.0, 0.0, 0.0, 0.0, totalG, totalCostEur);
+            }
+
+            try
+            {
+                var url = $"http://{ip}:{port}/server/files/gcodes/{Uri.EscapeDataString(relPath)}";
+                using var req = new HttpRequestMessage(HttpMethod.Get, url);
+                using var resp = await Http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead);
+                if (!resp.IsSuccessStatusCode) return null;
+
+                using var stream = await resp.Content.ReadAsStreamAsync();
+                using var reader = new StreamReader(stream, Encoding.UTF8, false, 65536);
+
+                string currentFeature = "model";
+                double mmModel = 0.0;
+                double mmTower = 0.0;
+                double mmSupport = 0.0;
+                double mmBrim = 0.0;
+
+                string? line;
+                while ((line = await reader.ReadLineAsync()) != null)
+                {
+                    var trimmed = line.Trim();
+                    if (trimmed.Length == 0) continue;
+
+                    if (trimmed.StartsWith(";TYPE:", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var feature = trimmed.Substring(6).Trim().ToLowerInvariant();
+                        if (feature.Contains("prime tower") || feature.Contains("wipe tower"))
+                            currentFeature = "tower";
+                        else if (feature.Contains("support"))
+                            currentFeature = "support";
+                        else if (feature.Contains("brim") || feature.Contains("skirt"))
+                            currentFeature = "brim";
+                        else
+                            currentFeature = "model";
+                        continue;
+                    }
+
+                    if (trimmed.StartsWith(";"))
+                    {
+                        if (trimmed.StartsWith("; filament used [", StringComparison.OrdinalIgnoreCase) ||
+                            trimmed.StartsWith("; total filament used", StringComparison.OrdinalIgnoreCase))
+                        {
+                            break;
+                        }
+                        continue;
+                    }
+
+                    if (trimmed.StartsWith("G1", StringComparison.OrdinalIgnoreCase) || trimmed.StartsWith("G0", StringComparison.OrdinalIgnoreCase))
+                    {
+                        int eIdx = trimmed.IndexOf(" E", StringComparison.OrdinalIgnoreCase);
+                        if (eIdx < 0 && trimmed.StartsWith("G1 E", StringComparison.OrdinalIgnoreCase)) eIdx = 2;
+
+                        if (eIdx >= 0)
+                        {
+                            var sub = trimmed.Substring(eIdx + 1);
+                            var parts = sub.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+                            if (parts.Length > 0 && (parts[0].StartsWith("E", StringComparison.OrdinalIgnoreCase) || parts[0].StartsWith("e")))
+                            {
+                                var numStr = parts[0].Substring(1);
+                                if (double.TryParse(numStr, System.Globalization.CultureInfo.InvariantCulture, out var eVal) && eVal > 0 && eVal < 200.0)
+                                {
+                                    switch (currentFeature)
+                                    {
+                                        case "tower": mmTower += eVal; break;
+                                        case "support": mmSupport += eVal; break;
+                                        case "brim": mmBrim += eVal; break;
+                                        default: mmModel += eVal; break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                double totalMm = mmModel + mmTower + mmSupport + mmBrim;
+                if (totalMm <= 0) return null;
+
+                var modelPct = Math.Round((mmModel / totalMm) * 100.0, 1);
+                var towerPct = Math.Round((mmTower / totalMm) * 100.0, 1);
+                var supportPct = Math.Round((mmSupport / totalMm) * 100.0, 1);
+                var brimPct = Math.Round((mmBrim / totalMm) * 100.0, 1);
+
+                var entry = new FeatureBreakdownPercentCache
+                {
+                    ModelPct = modelPct,
+                    SupportPct = supportPct,
+                    PrimeTowerPct = towerPct,
+                    BrimPct = brimPct
+                };
+                cache[key] = entry;
+                SaveFeatureBreakdownCache(cache);
+
+                return BuildBreakdownFromPercentages(modelPct, supportPct, towerPct, brimPct, totalG, totalCostEur);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
         private static string CleanProjectName(string filename)
         {
             var name = Path.GetFileName(filename);
@@ -572,6 +959,17 @@ namespace SparkXPrintConsole
             public string? TimeEst { get; set; }
             public string? FilamentType { get; set; }
             public string? FilamentName { get; set; }
+            public List<string> FilamentColors { get; set; } = new();
+            public List<string> FilamentTypes { get; set; } = new();
+            public List<string> FilamentNames { get; set; } = new();
+            public List<double> FilamentGramsList { get; set; } = new();
+            public List<double> FilamentMetersList { get; set; } = new();
+            public List<double> FilamentCostsList { get; set; } = new();
+            public double? TotalFilamentGrams { get; set; }
+            public double? TotalFilamentCost { get; set; }
+            public int TotalFilamentChanges { get; set; }
+            public string? EnablePrimeTower { get; set; }
+            public PrintFeatureBreakdown? Breakdown { get; set; }
             public string? PrintSettingsId { get; set; }
             public string? PrinterSettingsId { get; set; }
             public string? NozzleDiameter { get; set; }

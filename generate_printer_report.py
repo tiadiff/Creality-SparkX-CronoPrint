@@ -75,6 +75,57 @@ def format_duration(seconds):
         parts.append(f"{rem_sec}s")
     return " ".join(parts) if parts else "0s"
 
+BREAKDOWN_CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "feature_breakdown_cache.json")
+
+def load_feature_breakdown_cache():
+    try:
+        if os.path.exists(BREAKDOWN_CACHE_FILE):
+            with open(BREAKDOWN_CACHE_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+def save_feature_breakdown_cache(cache):
+    try:
+        with open(BREAKDOWN_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(cache, f, indent=2)
+    except Exception:
+        pass
+
+def build_breakdown_from_percentages(model_pct, support_pct, prime_tower_pct, brim_pct, total_g, total_cost):
+    model_g = round(total_g * (model_pct / 100.0), 1)
+    support_g = round(total_g * (support_pct / 100.0), 1)
+    prime_tower_g = round(total_g * (prime_tower_pct / 100.0), 1)
+    brim_g = round(total_g * (brim_pct / 100.0), 1)
+    waste_total_g = round(support_g + prime_tower_g + brim_g, 1)
+    waste_total_pct = round(support_pct + prime_tower_pct + brim_pct, 1)
+
+    model_cost = round(total_cost * (model_pct / 100.0), 2)
+    support_cost = round(total_cost * (support_pct / 100.0), 2)
+    prime_tower_cost = round(total_cost * (prime_tower_pct / 100.0), 2)
+    brim_cost = round(total_cost * (brim_pct / 100.0), 2)
+    waste_total_cost = round(support_cost + prime_tower_cost + brim_cost, 2)
+
+    return {
+        "model_g": model_g,
+        "model_pct": round(model_pct, 1),
+        "model_cost_eur": model_cost,
+        "support_g": support_g,
+        "support_pct": round(support_pct, 1),
+        "support_cost_eur": support_cost,
+        "prime_tower_g": prime_tower_g,
+        "prime_tower_pct": round(prime_tower_pct, 1),
+        "prime_tower_cost_eur": prime_tower_cost,
+        "brim_g": brim_g,
+        "brim_pct": round(brim_pct, 1),
+        "brim_cost_eur": brim_cost,
+        "waste_total_g": waste_total_g,
+        "waste_total_pct": waste_total_pct,
+        "waste_total_cost_eur": waste_total_cost,
+        "has_breakdown": True
+    }
+
 def extract_file_details(ip, port, rel_path, file_size=0):
     """Extract thumbnail, slicer, layers, and deep config metadata using HTTP Range requests."""
     url = f"http://{ip}:{port}/server/files/gcodes/" + urllib.parse.quote(rel_path)
@@ -88,6 +139,16 @@ def extract_file_details(ip, port, rel_path, file_size=0):
         "time_est": None,
         "filament_name": None,
         "filament_type": None,
+        "filament_colors": [],
+        "filament_types": [],
+        "filament_names": [],
+        "filament_grams_list": [],
+        "filament_meters_list": [],
+        "filament_costs_list": [],
+        "total_filament_grams": None,
+        "total_filament_cost": None,
+        "total_filament_changes": 0,
+        "enable_prime_tower": None,
         "nozzle_temp": None,
         "first_layer_nozzle_temp": None,
         "bed_temp": None,
@@ -158,7 +219,7 @@ def extract_file_details(ip, port, rel_path, file_size=0):
         pass
 
     if file_size > 0:
-        start_byte = max(0, file_size - 76800)
+        start_byte = max(0, file_size - 163840)
         try:
             req_tail = urllib.request.Request(url, headers={"Range": f"bytes={start_byte}-{file_size}"})
             with urllib.request.urlopen(req_tail, timeout=5) as r:
@@ -174,25 +235,77 @@ def extract_file_details(ip, port, rel_path, file_size=0):
                     k = parts[0].strip()
                     v = parts[1].strip().strip('\"')
 
-                    if k in ["total filament used [g]", "filament used [g]"]:
-                        val = v.split(",")[0].strip()
+                    if k == "total filament used [g]":
                         try:
-                            info["filament_g_est"] = float(val)
+                            g = float(v.split(",")[0].strip())
+                            info["total_filament_grams"] = g
+                            if not info["filament_g_est"]:
+                                info["filament_g_est"] = g
                         except Exception:
                             pass
-                    elif k in ["total filament cost", "filament cost"]:
-                        val = v.split(",")[0].strip()
+                    elif k == "filament used [g]":
+                        grams = []
+                        for item in v.split(","):
+                            try:
+                                grams.append(float(item.strip()))
+                            except Exception:
+                                pass
+                        if grams:
+                            info["filament_grams_list"] = grams
+                            if not info["filament_g_est"]:
+                                info["filament_g_est"] = grams[0]
+                    elif k == "filament used [mm]":
+                        meters = []
+                        for item in v.split(","):
+                            try:
+                                meters.append(float(item.strip()) / 1000.0)
+                            except Exception:
+                                pass
+                        if meters:
+                            info["filament_meters_list"] = meters
+                    elif k == "total filament cost":
                         try:
-                            info["filament_cost_est"] = float(val)
+                            c = float(v.split(",")[0].strip())
+                            info["total_filament_cost"] = c
+                            if not info["filament_cost_est"]:
+                                info["filament_cost_est"] = c
                         except Exception:
                             pass
+                    elif k == "filament cost":
+                        costs = []
+                        for item in v.split(","):
+                            try:
+                                costs.append(float(item.strip()))
+                            except Exception:
+                                pass
+                        if costs:
+                            info["filament_costs_list"] = costs
+                            if not info["filament_cost_est"]:
+                                info["filament_cost_est"] = costs[0]
+                    elif k == "total filament change":
+                        try:
+                            info["total_filament_changes"] = int(v.strip())
+                        except Exception:
+                            pass
+                    elif k in ["filament_colour", "default_filament_colour"]:
+                        if not info["filament_colors"] or k == "filament_colour":
+                            cols = [c.strip().strip('\"') for c in re.split(r'[;,]', v) if c.strip()]
+                            info["filament_colors"] = [c for c in cols if c.startswith("#") or len(c) >= 4]
+                    elif k == "filament_settings_id":
+                        names = [n.strip().strip('\"') for n in v.split(";") if n.strip()]
+                        info["filament_names"] = names
+                        if names:
+                            info["filament_name"] = names[0]
+                    elif k == "filament_type":
+                        types = [t.strip().strip('\"') for t in v.split(";") if t.strip()]
+                        info["filament_types"] = types
+                        if types:
+                            info["filament_type"] = types[0]
+                    elif k == "enable_prime_tower":
+                        info["enable_prime_tower"] = v.strip()
                     elif "estimated printing time" in k:
                         if not info["time_est"]:
                             info["time_est"] = v
-                    elif k == "filament_type":
-                        info["filament_type"] = v.split(";")[0].strip()
-                    elif k == "filament_settings_id":
-                        info["filament_name"] = v.split(";")[0].strip()
                     elif k == "print_settings_id":
                         info["print_settings_id"] = v
                     elif k == "printer_settings_id":
@@ -312,12 +425,82 @@ def fetch_printer_history(ip=PRINTER_IP, port=PRINTER_PORT, limit=200):
         sliced_grams = file_meta.get("filament_g_est")
         sliced_cost = file_meta.get("filament_cost_est")
 
-        actual_grams = float(calc_grams) if (calc_grams and calc_grams > 0) else float(sliced_grams or 0.0)
-        
-        if sliced_cost and status == "completed":
+        total_planned_g = file_meta.get("total_filament_grams")
+        grams_list = file_meta.get("filament_grams_list") or []
+        meters_list = file_meta.get("filament_meters_list") or []
+        costs_list = file_meta.get("filament_costs_list") or []
+        colors_list = file_meta.get("filament_colors") or []
+        types_list = file_meta.get("filament_types") or []
+        names_list = file_meta.get("filament_names") or []
+
+        if status == "completed" and total_planned_g is not None:
+            actual_grams = float(total_planned_g)
+        elif status == "completed" and grams_list:
+            actual_grams = float(sum(grams_list))
+        elif calc_grams and calc_grams > 0:
+            actual_grams = float(calc_grams)
+        else:
+            actual_grams = float(sliced_grams or 0.0)
+
+        total_planned_cost = file_meta.get("total_filament_cost")
+        if status == "completed" and total_planned_cost is not None:
+            cost_eur = round(float(total_planned_cost), 2)
+        elif status == "completed" and costs_list:
+            cost_eur = round(sum(costs_list), 2)
+        elif status == "completed" and sliced_cost:
             cost_eur = round(float(sliced_cost), 2)
         else:
             cost_eur = round(actual_grams * (DEFAULT_COST_PER_KG / 1000.0), 2)
+
+        fil_list = []
+        tot_g = actual_grams if actual_grams > 0 else (total_planned_g or (sum(grams_list) if grams_list else 0.0))
+        slot_count = max(len(grams_list), len(colors_list), 1)
+        for i in range(slot_count):
+            g = grams_list[i] if i < len(grams_list) else (tot_g if slot_count == 1 else 0.0)
+            if slot_count > 1 and g <= 0.05:
+                continue
+            m = meters_list[i] if i < len(meters_list) else (fil_used_m if tot_g <= 0 else (g / tot_g) * fil_used_m)
+            c = costs_list[i] if i < len(costs_list) else g * (DEFAULT_COST_PER_KG / 1000.0)
+            hex_c = colors_list[i] if i < len(colors_list) else ("#10B981" if i == 0 else "#3B82F6")
+            t = types_list[i] if i < len(types_list) else (file_meta.get("filament_type") or "PLA")
+            n = names_list[i] if i < len(names_list) else (file_meta.get("filament_name") or "Standard")
+            pct = round((g / tot_g) * 100.0, 1) if tot_g > 0 else 100.0
+
+            fil_list.append({
+                "index": i,
+                "color_hex": hex_c,
+                "name": n,
+                "type": t,
+                "used_g": round(g, 2),
+                "used_m": round(m, 2),
+                "cost_eur": round(c, 2),
+                "pct": pct
+            })
+
+        if not fil_list:
+            fil_list.append({
+                "index": 0,
+                "color_hex": colors_list[0] if colors_list else "#10B981",
+                "name": file_meta.get("filament_name") or "Standard",
+                "type": file_meta.get("filament_type") or "PLA",
+                "used_g": round(actual_grams, 2),
+                "used_m": round(fil_used_m, 2),
+                "cost_eur": cost_eur,
+                "pct": 100.0
+            })
+
+        cache = load_feature_breakdown_cache()
+        base_fn = os.path.basename(fname)
+        item_breakdown = None
+        if base_fn in cache:
+            entry = cache[base_fn]
+            item_breakdown = build_breakdown_from_percentages(
+                entry.get("model_pct", 100.0), entry.get("support_pct", 0.0),
+                entry.get("prime_tower_pct", 0.0), entry.get("brim_pct", 0.0),
+                actual_grams, cost_eur
+            )
+        elif file_meta.get("enable_support") == "0" and file_meta.get("enable_prime_tower") != "1" and (file_meta.get("brim_type") == "no_brim" or not file_meta.get("brim_width") or file_meta.get("brim_width") == "0"):
+            item_breakdown = build_breakdown_from_percentages(100.0, 0.0, 0.0, 0.0, actual_grams, cost_eur)
 
         start_dt = datetime.datetime.fromtimestamp(start_ts) if start_ts else None
         end_dt = datetime.datetime.fromtimestamp(end_ts) if end_ts else None
@@ -371,6 +554,10 @@ def fetch_printer_history(ip=PRINTER_IP, port=PRINTER_PORT, limit=200):
             "filament_cost_eur": cost_eur,
             "filament_type": file_meta.get("filament_type") or "PLA",
             "filament_name": file_meta.get("filament_name") or "Standard",
+            "filaments": fil_list,
+            "is_multicolor": len(fil_list) > 1,
+            "filament_changes": file_meta.get("total_filament_changes", 0),
+            "breakdown": item_breakdown,
             "thumbnail": file_meta.get("thumbnail"),
             "slicer": file_meta.get("slicer") or "Creality Print",
             "total_layers": file_meta.get("total_layers") or "N/D",
@@ -856,6 +1043,117 @@ def generate_html_report(jobs, output_path="printer_history.html"):
             border-color: var(--border-strong);
             background: var(--bg-elevated);
             color: var(--fg-white);
+        }}
+
+        /* MULTI-FILAMENT & FEATURE BREAKDOWN ENHANCEMENTS */
+        .color-dots-group {{
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            vertical-align: middle;
+        }}
+
+        .color-dot {{
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+            border: 1px solid rgba(255, 255, 255, 0.4);
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+            flex-shrink: 0;
+        }}
+
+        .color-dot.large {{
+            width: 14px;
+            height: 14px;
+        }}
+
+        .segment-bar {{
+            height: 10px;
+            border-radius: 5px;
+            background: #14171f;
+            overflow: hidden;
+            display: flex;
+            width: 100%;
+            margin: 8px 0;
+            border: 1px solid var(--border);
+        }}
+
+        .segment-bar-slice {{
+            height: 100%;
+            transition: width 0.3s ease;
+        }}
+
+        .filament-card-row {{
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            border-radius: 5px;
+            padding: 8px 12px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 6px;
+        }}
+
+        .breakdown-summary-grid {{
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin: 10px 0;
+        }}
+
+        .breakdown-card {{
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 10px 14px;
+        }}
+
+        .breakdown-card.model {{
+            border-color: rgba(16, 185, 129, 0.3);
+            background: rgba(16, 185, 129, 0.05);
+        }}
+
+        .breakdown-card.waste {{
+            border-color: rgba(245, 158, 11, 0.3);
+            background: rgba(245, 158, 11, 0.05);
+        }}
+
+        .breakdown-card-title {{
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 4px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }}
+
+        .breakdown-card-num {{
+            font-family: var(--font-mono);
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--fg-white);
+        }}
+
+        .breakdown-card-sub {{
+            font-family: var(--font-mono);
+            font-size: 12px;
+            color: var(--fg-muted);
+            margin-top: 2px;
+        }}
+
+        .breakdown-item-row {{
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 7px 11px;
+            border-radius: 4px;
+            background: var(--bg-viewport);
+            margin-bottom: 5px;
+            border: 1px solid var(--border-faint);
+            font-size: 13px;
         }}
 
         .feed-col-specs {{
@@ -1390,6 +1688,7 @@ def generate_html_report(jobs, output_path="printer_history.html"):
                     : svgPlaceholder;
 
                 const cost = ((j.filament_g * costPerKg) / 1000.0).toFixed(2);
+                const finalCost = (j.filament_cost_eur && j.filament_cost_eur > 0) ? j.filament_cost_eur.toFixed(2) : cost;
                 const nozzleStr = j.nozzle_diameter !== 'N/D' ? `${{j.nozzle_diameter}}mm` : '0.4mm';
                 const layerStr = j.layer_height !== 'N/D' ? `${{j.layer_height}}mm` : 'N/D';
                 const italianDate = formatItalianDate(j.timestamp, j.start_time);
@@ -1397,6 +1696,17 @@ def generate_html_report(jobs, output_path="printer_history.html"):
                 const deltaSpan = j.delta_str 
                     ? `<span class="metric-delta">(${{j.delta_str}})</span>` 
                     : '';
+
+                let filTag = `<span class="tag-pill green">${{j.filament_name}}</span>`;
+                if (j.is_multicolor && j.filaments && j.filaments.length > 1) {{
+                    const dots = j.filaments.map(f => `<span class="color-dot" style="background:${{f.color_hex}};" title="${{f.name}}: ${{f.used_g}}g (${{f.pct}}%)"></span>`).join('');
+                    filTag = `<span class="tag-pill green" style="display:inline-flex; align-items:center; gap:6px;"><span class="color-dots-group">${{dots}}</span><strong>Multicolore:</strong> ${{j.filaments.length}} Colori (${{j.filament_changes}} cambi)</span>`;
+                }}
+
+                let bdTag = '';
+                if (j.breakdown && j.breakdown.has_breakdown) {{
+                    bdTag = `<span class="tag-pill" title="Oggetto: ${{j.breakdown.model_g}}g (${{j.breakdown.model_pct}}%) • Supporti/Torre/Brim: ${{j.breakdown.waste_total_g}}g (${{j.breakdown.waste_total_pct}}%)">📦 <strong>Oggetto:</strong> ${{j.breakdown.model_pct}}% &bull; 🌲 <strong>Scarto:</strong> ${{j.breakdown.waste_total_pct}}%</span>`;
+                }}
 
                 return `
                 <div class="feed-row" onclick="openInspector('${{j.job_id}}')">
@@ -1406,12 +1716,13 @@ def generate_html_report(jobs, output_path="printer_history.html"):
                         <div class="feed-title" title="${{j.project_name}}">${{j.project_name}}</div>
                         <div class="feed-file" title="${{j.filename}}">${{j.print_profile}}</div>
                         <div class="feed-tags">
-                            <span class="tag-pill green">${{j.filament_name}}</span>
+                            ${{filTag}}
                             <span class="tag-pill highlight"><strong>Ugello:</strong> ${{nozzleStr}}</span>
                             <span class="tag-pill highlight"><strong>Layer:</strong> ${{layerStr}}</span>
                             <span class="tag-pill"><strong>Infill:</strong> ${{j.infill_density !== 'N/D' ? j.infill_density : ''}} ${{j.infill_pattern}}</span>
                             ${{j.supports_enabled ? `<span class="tag-pill green"><strong>Supporti:</strong> ${{j.support_label.toUpperCase()}}</span>` : ''}}
                             ${{j.has_ironing ? `<span class="tag-pill green">STIRATURA</span>` : ''}}
+                            ${{bdTag}}
                         </div>
                     </div>
 
@@ -1425,7 +1736,7 @@ def generate_html_report(jobs, output_path="printer_history.html"):
                     <div class="feed-col-metrics">
                         <div class="metric-duration">${{j.print_duration_str}} ${{deltaSpan}}</div>
                         <div class="metric-grams">${{j.filament_g.toFixed(1)}}g &bull; ${{j.filament_m.toFixed(2)}}m</div>
-                        <div class="metric-cost">€${{cost}}</div>
+                        <div class="metric-cost">€${{finalCost}}</div>
                     </div>
 
                     <div class="feed-col-status">
@@ -1451,6 +1762,7 @@ def generate_html_report(jobs, output_path="printer_history.html"):
                     : svgPlaceholder;
 
                 const cost = ((j.filament_g * costPerKg) / 1000.0).toFixed(2);
+                const finalCost = (j.filament_cost_eur && j.filament_cost_eur > 0) ? j.filament_cost_eur.toFixed(2) : cost;
                 const italianDate = formatItalianDate(j.timestamp, j.start_time);
                 const nozzleVal = j.nozzle_diameter !== 'N/D' ? `${{j.nozzle_diameter}}mm` : '0.4mm';
                 const layerVal = j.layer_height !== 'N/D' ? `${{j.layer_height}}mm` : 'N/D';
@@ -1462,14 +1774,18 @@ def generate_html_report(jobs, output_path="printer_history.html"):
                         <span class="status-badge ${{j.status}}" style="position:absolute; top:8px; right:8px;">${{j.status_label}}</span>
                     </div>
                     <div class="gallery-body">
-                        <div style="font-size:15px; font-weight:700; color:var(--fg-white); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${{j.project_name}}</div>
+                        <div style="font-size:15px; font-weight:700; color:var(--fg-white); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:flex; align-items:center; justify-content:space-between;">
+                            <span>${{j.project_name}}</span>
+                            ${{j.is_multicolor && j.filaments && j.filaments.length > 1 ? `<span class="color-dots-group">${{j.filaments.map(f => `<span class="color-dot" style="background:${{f.color_hex}};"></span>`).join('')}}</span>` : ''}}
+                        </div>
                         <div style="display:flex; justify-content:space-between; font-family:var(--font-mono); font-size:13px; margin: 3px 0;">
                             <span style="color:var(--fg-white); font-weight:700;">${{j.print_duration_str}}</span>
-                            <span style="color:var(--green-bright); font-weight:700;">€${{cost}}</span>
+                            <span style="color:var(--green-bright); font-weight:700;">€${{finalCost}}</span>
                         </div>
                         <div style="display:flex; flex-wrap:wrap; gap:5px; margin: 4px 0;">
                             <span class="tag-pill highlight"><strong>Ugello:</strong> ${{nozzleVal}}</span>
                             <span class="tag-pill highlight"><strong>Layer:</strong> ${{layerVal}}</span>
+                            ${{j.breakdown && j.breakdown.has_breakdown ? `<span class="tag-pill" style="font-size:11px;">📦 ${{j.breakdown.model_pct}}%</span>` : ''}}
                         </div>
                         <div style="font-size:13px; font-weight:600; color:var(--fg-white); margin-top:4px;">
                             ${{italianDate}}
@@ -1493,6 +1809,7 @@ def generate_html_report(jobs, output_path="printer_history.html"):
                     : `<div class="table-thumb" style="display:flex;align-items:center;justify-content:center;">${{svgPlaceholder}}</div>`;
 
                 const cost = ((j.filament_g * costPerKg) / 1000.0).toFixed(2);
+                const finalCost = (j.filament_cost_eur && j.filament_cost_eur > 0) ? j.filament_cost_eur.toFixed(2) : cost;
                 const italianDate = formatItalianDate(j.timestamp, j.start_time);
 
                 return `
@@ -1509,8 +1826,12 @@ def generate_html_report(jobs, output_path="printer_history.html"):
                     <td style="font-family:var(--font-mono); font-weight:700; color:var(--fg-white); font-size:14px;">${{j.print_duration_str}}</td>
                     <td style="font-family:var(--font-mono); color:var(--fg-faint); font-size:13px;">${{j.time_est_str}}</td>
                     <td style="font-family:var(--font-mono); font-size:13px;">${{j.filament_g.toFixed(1)}}g</td>
-                    <td style="font-family:var(--font-mono); font-weight:700; color:var(--green-bright); font-size:14px;">€${{cost}}</td>
-                    <td><span class="tag-pill green">${{j.filament_type}}</span></td>
+                    <td style="font-family:var(--font-mono); font-weight:700; color:var(--green-bright); font-size:14px;">€${{finalCost}}</td>
+                    <td title="${{j.filament_name}}">
+                        ${{j.is_multicolor && j.filaments && j.filaments.length > 1 
+                            ? `<span class="tag-pill green" style="display:inline-flex; align-items:center; gap:5px;"><span class="color-dots-group">${{j.filaments.map(f => `<span class="color-dot" style="background:${{f.color_hex}};"></span>`).join('')}}</span>${{j.filaments.length}} Colori</span>`
+                            : `<span class="tag-pill green">${{j.filament_type}}</span>`}}
+                    </td>
                 </tr>
                 `;
             }}).join('');
@@ -1616,6 +1937,123 @@ def generate_html_report(jobs, output_path="printer_history.html"):
             }}
 
             const cost = ((j.filament_g * costPerKg) / 1000.0).toFixed(2);
+            const finalCost = (j.filament_cost_eur && j.filament_cost_eur > 0) ? j.filament_cost_eur.toFixed(2) : cost;
+
+            // 1. MULTI-FILAMENT & COLOR BREAKDOWN SECTION
+            let filSection = '';
+            if (j.filaments && j.filaments.length > 0) {{
+                const isMulti = j.is_multicolor || j.filaments.length > 1;
+                const title = isMulti
+                    ? `Multi-Filamento & Colori Usati (${{j.filaments.length}} Colori &bull; ${{j.filament_changes}} Cambi)`
+                    : `Filamento & Materiale Usato`;
+
+                let barSlices = j.filaments.map(f => 
+                    `<div class="segment-bar-slice" style="width:${{f.pct}}%; background:${{f.color_hex}};" title="${{f.name}} (${{f.type}}): ${{f.used_g}}g (${{f.pct}}%)"></div>`
+                ).join('');
+
+                let cardRows = j.filaments.map((f, idx) => `
+                    <div class="filament-card-row">
+                        <div style="display:flex; align-items:center; gap:10px;">
+                            <span class="color-dot large" style="background:${{f.color_hex}};"></span>
+                            <div>
+                                <div style="font-weight:700; color:var(--fg-white); font-size:13px;">${{f.name}}</div>
+                                <div style="font-family:var(--font-mono); font-size:11px; color:var(--fg-muted);">Slot #${{idx + 1}} &bull; ${{f.type}} &bull; ${{f.color_hex}}</div>
+                            </div>
+                        </div>
+                        <div style="text-align:right; font-family:var(--font-mono);">
+                            <div style="font-weight:700; color:var(--fg-white); font-size:13px;">${{f.used_g.toFixed(1)}} g <span style="color:var(--green-bright); font-size:12px;">(${{f.pct}}%)</span></div>
+                            <div style="font-size:11px; color:var(--fg-muted);">${{f.used_m.toFixed(2)}} m &bull; €${{f.cost_eur.toFixed(2)}}</div>
+                        </div>
+                    </div>
+                `).join('');
+
+                filSection = `
+                    <div class="spec-block-title">${{title}}</div>
+                    <div class="segment-bar">${{barSlices}}</div>
+                    <div style="margin-top:8px;">${{cardRows}}</div>
+                    <div style="display:flex; justify-content:space-between; font-family:var(--font-mono); font-size:12px; padding:6px 10px; background:var(--bg-base); border-radius:4px; border:1px solid var(--border); margin-top:4px;">
+                        <span style="color:var(--fg-muted);">Totale Filamento: <strong style="color:var(--fg-white);">${{j.filament_g.toFixed(1)}} g</strong> (${{j.filament_m.toFixed(2)}} m)</span>
+                        <span style="color:var(--green-bright); font-weight:700;">Spesa Filamento: €${{finalCost}}</span>
+                    </div>
+                `;
+            }}
+
+            // 2. FEATURE BREAKDOWN SECTION: FINISHED MODEL VS SUPPORTS, TOWER & BRIM
+            let breakdownSection = '';
+            if (j.breakdown && j.breakdown.has_breakdown) {{
+                const bd = j.breakdown;
+                breakdownSection = `
+                    <div class="spec-block-title">Ripartizione: Oggetto Stampato vs Supporti & Scarto</div>
+                    <div class="segment-bar">
+                        <div class="segment-bar-slice" style="width:${{bd.model_pct}}%; background:#10B981;" title="Oggetto Stampato: ${{bd.model_g}}g (${{bd.model_pct}}%)"></div>
+                        <div class="segment-bar-slice" style="width:${{bd.prime_tower_pct}}%; background:#8B5CF6;" title="Prime/Wipe Tower: ${{bd.prime_tower_g}}g (${{bd.prime_tower_pct}}%)"></div>
+                        <div class="segment-bar-slice" style="width:${{bd.support_pct}}%; background:#F59E0B;" title="Supporti: ${{bd.support_g}}g (${{bd.support_pct}}%)"></div>
+                        <div class="segment-bar-slice" style="width:${{bd.brim_pct}}%; background:#3B82F6;" title="Brim/Adesione: ${{bd.brim_g}}g (${{bd.brim_pct}}%)"></div>
+                    </div>
+
+                    <div class="breakdown-summary-grid">
+                        <div class="breakdown-card model">
+                            <div class="breakdown-card-title" style="color:var(--green-bright);">
+                                <span>📦</span> OGGETTO FINITO (NETTO)
+                            </div>
+                            <div class="breakdown-card-num">${{bd.model_g.toFixed(1)}} g <span style="font-size:13px; color:var(--green-bright);">(${{bd.model_pct}}%)</span></div>
+                            <div class="breakdown-card-sub">Costo filamento: €${{bd.model_cost_eur.toFixed(2)}}</div>
+                        </div>
+                        <div class="breakdown-card waste">
+                            <div class="breakdown-card-title" style="color:#F59E0B;">
+                                <span>🌲</span> SCARTO & AUSILIARI (TOTALE)
+                            </div>
+                            <div class="breakdown-card-num">${{bd.waste_total_g.toFixed(1)}} g <span style="font-size:13px; color:#F59E0B;">(${{bd.waste_total_pct}}%)</span></div>
+                            <div class="breakdown-card-sub">Costo ausiliari: €${{bd.waste_total_cost_eur.toFixed(2)}}</div>
+                        </div>
+                    </div>
+
+                    <div style="margin-top:8px;">
+                        <div class="breakdown-item-row">
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <span class="color-dot" style="background:#10B981;"></span>
+                                <span style="font-weight:600; color:var(--fg-white);">Oggetto Stampato (Modello Effettivo)</span>
+                            </div>
+                            <div style="font-family:var(--font-mono); text-align:right;">
+                                <strong>${{bd.model_g.toFixed(1)}} g</strong> (${{bd.model_pct}}%) &bull; <span style="color:var(--green-bright);">€${{bd.model_cost_eur.toFixed(2)}}</span>
+                            </div>
+                        </div>
+
+                        ${{bd.prime_tower_g > 0 || bd.prime_tower_pct > 0 ? `
+                        <div class="breakdown-item-row">
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <span class="color-dot" style="background:#8B5CF6;"></span>
+                                <span style="font-weight:600; color:var(--fg-white);">Prime Tower (Torre di Spurgo Cambi Colore)</span>
+                            </div>
+                            <div style="font-family:var(--font-mono); text-align:right;">
+                                <strong>${{bd.prime_tower_g.toFixed(1)}} g</strong> (${{bd.prime_tower_pct}}%) &bull; <span style="color:var(--fg-muted);">€${{bd.prime_tower_cost_eur.toFixed(2)}}</span>
+                            </div>
+                        </div>` : ''}}
+
+                        ${{bd.support_g > 0 || bd.support_pct > 0 ? `
+                        <div class="breakdown-item-row">
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <span class="color-dot" style="background:#F59E0B;"></span>
+                                <span style="font-weight:600; color:var(--fg-white);">Supporti & Strutture di Sostegno</span>
+                            </div>
+                            <div style="font-family:var(--font-mono); text-align:right;">
+                                <strong>${{bd.support_g.toFixed(1)}} g</strong> (${{bd.support_pct}}%) &bull; <span style="color:var(--fg-muted);">€${{bd.support_cost_eur.toFixed(2)}}</span>
+                            </div>
+                        </div>` : ''}}
+
+                        ${{bd.brim_g > 0 || bd.brim_pct > 0 ? `
+                        <div class="breakdown-item-row">
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <span class="color-dot" style="background:#3B82F6;"></span>
+                                <span style="font-weight:600; color:var(--fg-white);">Brim & Skirt (Adesione al Piatto)</span>
+                            </div>
+                            <div style="font-family:var(--font-mono); text-align:right;">
+                                <strong>${{bd.brim_g.toFixed(1)}} g</strong> (${{bd.brim_pct}}%) &bull; <span style="color:var(--fg-muted);">€${{bd.brim_cost_eur.toFixed(2)}}</span>
+                            </div>
+                        </div>` : ''}}
+                    </div>
+                `;
+            }}
 
             const detailsHtml = `
                 <div class="spec-block-title">Configurazione Slicer & Profilazione</div>
@@ -1627,6 +2065,10 @@ def generate_html_report(jobs, output_path="printer_history.html"):
                     <div class="spec-row"><span class="spec-k">Piano di Stampa</span><span class="spec-v">${{j.bed_type}}</span></div>
                     <div class="spec-row"><span class="spec-k">Dimensione G-Code</span><span class="spec-v">${{j.file_size_mb !== 'N/D' ? j.file_size_mb + ' MB' : 'N/D'}}</span></div>
                 </div>
+
+                ${{filSection}}
+
+                ${{breakdownSection}}
 
                 <div class="spec-block-title">Geometria, Struttura & Supporti</div>
                 <div class="spec-grid-2">
@@ -1654,7 +2096,7 @@ def generate_html_report(jobs, output_path="printer_history.html"):
                 <div class="spec-grid-2">
                     <div class="spec-row"><span class="spec-k">Filamento Estruso (Massa)</span><span class="spec-v" style="color:var(--fg-white); font-weight:600;">${{j.filament_g.toFixed(1)}} g</span></div>
                     <div class="spec-row"><span class="spec-k">Filamento Estruso (Lunghezza)</span><span class="spec-v">${{j.filament_m.toFixed(2)}} m</span></div>
-                    <div class="spec-row"><span class="spec-k">Costo Calcolato</span><span class="spec-v" style="color:var(--green-bright); font-weight:600;">€${{cost}} (@${{costPerKg.toFixed(1)}}/kg)</span></div>
+                    <div class="spec-row"><span class="spec-k">Costo Calcolato</span><span class="spec-v" style="color:var(--green-bright); font-weight:600;">€${{finalCost}} (@${{costPerKg.toFixed(1)}}/kg)</span></div>
                     <div class="spec-row"><span class="spec-k">Identificativo Filamento</span><span class="spec-v">${{j.filament_name}} (${{j.filament_type}})</span></div>
                     <div class="spec-row"><span class="spec-k">Durata Stampa Reale</span><span class="spec-v" style="color:var(--fg-white); font-weight:600;">${{j.print_duration_str}}</span></div>
                     <div class="spec-row"><span class="spec-k">Stima Slicer vs Reale</span><span class="spec-v">${{j.time_est_str}} ${{j.delta_str ? '(' + j.delta_str + ')' : ''}}</span></div>

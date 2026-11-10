@@ -44,22 +44,42 @@ Instead of saturating Wi-Fi networks by transferring full G-code files, CronoPri
   * Support enable flag and structure classification (Standard / Tree)
   * Extruder and heated bed operational temperatures
 
-### 2. Live Chamber Camera & Fullscreen Modal
+### 2. Multi-Filament & Multi-Color Accounting
+* **Per-Spool Telemetry:** Parses multi-color arrays from modern slicer footers (Creality Print, OrcaSlicer) to track every filament used in a single print job:
+  * Hexadecimal color swatch and display name (`filament_colour`, `default_filament_colour`)
+  * Material classification (`filament_type`, e.g., PLA, PETG, ABS, TPU)
+  * Filament spool preset identification (`filament_settings_id`)
+  * Itemized usage per color in grams (`g`), percentage (`%`), and length (`m`)
+  * Accurate financial cost attribution per color and cumulative print cost
+  * Total toolhead filament swap count (`total filament change`)
+* **Multi-Color Visual Breakdown:** Interactive multi-color segmented progress bars and individual filament cards in the Slide-Over Inspector drawer, list feed, and plate gallery.
+
+### 3. Finished Model vs. Waste Feature Breakdown (Prime Tower, Support, Brim)
+* **Extrusion Move Classifier:** Performs streaming relative extrusion analysis (`G1 ... E<val>`) along G-code feature tags:
+  * **Finished Model:** Outer wall, Inner wall, Sparse infill, Solid infill, Top surface, Bridge infill
+  * **Prime / Wipe Tower:** Toolhead purge and purge tower volume during color changes
+  * **Supports:** Tree support, Standard support, and Support interface structures
+  * **Brim / Skirt:** Bed adhesion structures
+* **Zero-Overhead Fast Path:** Automatically detects single-structure jobs when supports, prime towers, and brims are disabled in slicer parameters (0 ms overhead).
+* **Cost & Weight Accounting:** Accurately calculates how much weight and money went into the actual physical part versus auxiliary print waste.
+* **Persistent Cache & On-Demand Engine:** Analyzed feature breakdowns are persisted to `feature_breakdown_cache.json` for zero-latency retrieval, with an interactive on-demand computation trigger in the desktop Inspector drawer.
+
+### 4. Live Chamber Camera & Fullscreen Modal
 * Directly embeds the printer's WebRTC video stream (port 8000) alongside active print metrics.
 * Single-click full-screen modal viewport with backdrop blur for detailed first-layer and print progress monitoring.
 
-### 3. Comprehensive Print Telemetry Views
-* **Horizontal Feed View:** Production-oriented list format displaying thumbnails, project filenames, slicer profiles, execution dates, duration, filament consumption, and calculated cost.
-* **Plate Gallery View:** Responsive visual card grid focusing on 3D rendered thumbnails and rapid visual status assessment.
-* **Data Table View:** High-density tabular layout with sorting, text search filtering, and nozzle/support segmentation.
-* **Slide-Over Inspector Drawer:** Detailed side panel exposing deep slicer parameters, mechanical kinematics, temperatures, and one-click remote reprint dispatch via Moonraker.
+### 5. Comprehensive Print Telemetry Views
+* **Horizontal Feed View:** Production-oriented list format displaying thumbnails, project filenames, slicer profiles, execution dates, duration, multi-filament swatches, feature breakdown badges, filament consumption, and calculated cost.
+* **Plate Gallery View:** Responsive visual card grid focusing on 3D rendered thumbnails, multi-color badges, and rapid visual status assessment.
+* **Data Table View:** High-density tabular layout with sorting, text search filtering, multi-color indicators, and nozzle/support segmentation.
+* **Slide-Over Inspector Drawer:** Detailed side panel exposing deep slicer parameters, multi-filament itemized cards, model vs. waste breakdown bars, mechanical kinematics, temperatures, and one-click remote reprint dispatch via Moonraker.
 
-### 4. Extended Italian Localization & Typographic Contrast
+### 6. Extended Italian Localization & Typographic Contrast
 * Italian extended date format (e.g., `Lunedi 7 Gennaio 2026, 17:32`).
 * Distinct, unambiguous badge labels for `Ugello` (Nozzle), `Layer` (Height), `Infill` (Density/Pattern), and `Supporti` (Supports).
 
-### 5. Standalone HTML Snapshot Generator
-* Includes a lightweight Python script (`generate_printer_report.py`) and Windows batch runner (`Genera_Report_Stampe.bat`) to generate offline, self-contained HTML reports (`printer_history.html`) without compiling .NET binaries.
+### 7. Standalone HTML Snapshot Generator
+* Includes a lightweight Python script (`generate_printer_report.py`) and Windows batch runner (`Genera_Report_Stampe.bat`) to generate offline, self-contained HTML reports (`printer_history.html`) with full multi-filament and breakdown visualization without compiling .NET binaries.
 
 ---
 
@@ -93,6 +113,18 @@ or via Python CLI:
 python generate_printer_report.py --open
 ```
 This queries Moonraker, extracts G-code metadata, produces `printer_history.html`, and opens it in your default web browser.
+
+---
+
+## Release Notes
+
+### Version 1.2.0
+- Added Multi-Filament and Multi-Color spool accounting: itemized usage per color in grams, percentage, and length, with individual filament cards and multi-color segmented progress bars.
+- Added Finished Model vs. Waste Feature Breakdown: streaming relative extrusion analysis classifying Outer/Inner walls, Infill, Top surface, Prime/Wipe towers, Supports, and Brims.
+- Added accurate cost and weight separation between actual physical parts and auxiliary print waste.
+- Added persistent breakdown caching in `feature_breakdown_cache.json` with on-demand computation engine.
+- Enhanced Slide-Over Inspector drawer, Horizontal Feed, and Plate Gallery with multi-color swatches and breakdown badges.
+- Updated standalone Python Moonraker history extractor (`generate_printer_report.py`) and offline HTML snapshot (`printer_history.html`).
 
 ---
 

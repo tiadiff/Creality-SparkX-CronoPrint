@@ -68,6 +68,18 @@ namespace SparkXPrintConsole
         [JsonPropertyName("filament_name")]
         public string FilamentName { get; set; } = "Standard";
 
+        [JsonPropertyName("filaments")]
+        public List<FilamentColorInfo> Filaments { get; set; } = new();
+
+        [JsonPropertyName("is_multicolor")]
+        public bool IsMulticolor { get; set; }
+
+        [JsonPropertyName("filament_changes")]
+        public int FilamentChanges { get; set; }
+
+        [JsonPropertyName("breakdown")]
+        public PrintFeatureBreakdown? Breakdown { get; set; }
+
         [JsonPropertyName("thumbnail")]
         public string? Thumbnail { get; set; }
 
@@ -223,6 +235,111 @@ namespace SparkXPrintConsole
 
         [JsonPropertyName("thumbnail")]
         public string? Thumbnail { get; set; }
+
+        [JsonPropertyName("filaments")]
+        public List<FilamentColorInfo> Filaments { get; set; } = new();
+
+        [JsonPropertyName("is_multicolor")]
+        public bool IsMulticolor { get; set; }
+
+        [JsonPropertyName("filament_changes")]
+        public int FilamentChanges { get; set; }
+
+        [JsonPropertyName("breakdown")]
+        public PrintFeatureBreakdown? Breakdown { get; set; }
+    }
+
+    public class FilamentColorInfo
+    {
+        [JsonPropertyName("index")]
+        public int Index { get; set; }
+
+        [JsonPropertyName("color_hex")]
+        public string ColorHex { get; set; } = "#10B981";
+
+        [JsonPropertyName("name")]
+        public string Name { get; set; } = "Standard";
+
+        [JsonPropertyName("type")]
+        public string Type { get; set; } = "PLA";
+
+        [JsonPropertyName("used_g")]
+        public double UsedG { get; set; }
+
+        [JsonPropertyName("used_m")]
+        public double UsedM { get; set; }
+
+        [JsonPropertyName("cost_eur")]
+        public double CostEur { get; set; }
+
+        [JsonPropertyName("pct")]
+        public double Pct { get; set; }
+    }
+
+    public class PrintFeatureBreakdown
+    {
+        [JsonPropertyName("model_g")]
+        public double ModelG { get; set; }
+
+        [JsonPropertyName("model_pct")]
+        public double ModelPct { get; set; }
+
+        [JsonPropertyName("model_cost_eur")]
+        public double ModelCostEur { get; set; }
+
+        [JsonPropertyName("support_g")]
+        public double SupportG { get; set; }
+
+        [JsonPropertyName("support_pct")]
+        public double SupportPct { get; set; }
+
+        [JsonPropertyName("support_cost_eur")]
+        public double SupportCostEur { get; set; }
+
+        [JsonPropertyName("prime_tower_g")]
+        public double PrimeTowerG { get; set; }
+
+        [JsonPropertyName("prime_tower_pct")]
+        public double PrimeTowerPct { get; set; }
+
+        [JsonPropertyName("prime_tower_cost_eur")]
+        public double PrimeTowerCostEur { get; set; }
+
+        [JsonPropertyName("brim_g")]
+        public double BrimG { get; set; }
+
+        [JsonPropertyName("brim_pct")]
+        public double BrimPct { get; set; }
+
+        [JsonPropertyName("brim_cost_eur")]
+        public double BrimCostEur { get; set; }
+
+        [JsonPropertyName("waste_total_g")]
+        public double WasteTotalG { get; set; }
+
+        [JsonPropertyName("waste_total_pct")]
+        public double WasteTotalPct { get; set; }
+
+        [JsonPropertyName("waste_total_cost_eur")]
+        public double WasteTotalCostEur { get; set; }
+
+        [JsonPropertyName("has_breakdown")]
+        public bool HasBreakdown { get; set; } = true;
+    }
+
+    public class FeatureBreakdownPercentCache
+    {
+        [JsonPropertyName("model_pct")]
+        public double ModelPct { get; set; }
+
+        [JsonPropertyName("support_pct")]
+        public double SupportPct { get; set; }
+
+        [JsonPropertyName("prime_tower_pct")]
+        public double PrimeTowerPct { get; set; }
+
+        [JsonPropertyName("brim_pct")]
+        public double BrimPct { get; set; }
     }
 }
 
